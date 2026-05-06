@@ -1,0 +1,82 @@
+{% extends "templates/web.html" %}
+
+{% block title %}NPP Portal{% endblock %}
+
+{% block head_include %}
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f172a">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link rel="stylesheet" href="/assets/npp/npp/shell.css">
+
+<script>
+    // Inject server-side context into a global the SPA can read.
+    window.NPP_CONTEXT = {
+        user: {{ user|tojson }},
+        userFirstName: {{ user_first_name|tojson }},
+        userFullName: {{ user_full_name|tojson }},
+        customer: {{ customer|tojson }},
+        customerName: {{ customer_name|tojson }},
+        baseUrl: "{{ frappe.utils.get_url() }}",
+        csrfToken: "{{ frappe.session.csrf_token if frappe.session.csrf_token else '' }}"
+    };
+</script>
+{% endblock %}
+
+{% block page_content %}
+<div id="npp-app" class="npp-app npp-spring">
+    <!-- Header (sticky) -->
+    <header class="npp-header" id="npp-header">
+        <div class="npp-header-inner">
+            <button class="npp-icon-btn" id="npp-btn-back" type="button" aria-label="Quay lại" hidden>
+                <i class="fas fa-arrow-left"></i>
+            </button>
+            <h1 class="npp-header-title" id="npp-header-title">NPP Portal</h1>
+            <div class="npp-header-actions">
+                <button class="npp-icon-btn" id="npp-btn-refresh" type="button" aria-label="Làm mới">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+                <button class="npp-icon-btn" id="npp-btn-season" type="button" aria-label="Đổi mùa">
+                    <span class="npp-season-icon">🌸</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main view container — swapped by router -->
+    <main class="npp-main" id="npp-view"></main>
+
+    <!-- Bottom navigation -->
+    <nav class="npp-bottom-nav" id="npp-bottom-nav">
+        <a href="#/" class="npp-nav-item" data-route="/">
+            <i class="fas fa-house"></i><span>Trang chủ</span>
+        </a>
+        <a href="#/dat-hang" class="npp-nav-item" data-route="/dat-hang">
+            <i class="fas fa-cart-plus"></i><span>Đặt hàng</span>
+        </a>
+        <a href="#/don-hang" class="npp-nav-item" data-route="/don-hang">
+            <i class="fas fa-box"></i><span>Đơn hàng</span>
+        </a>
+        <a href="#/cong-no" class="npp-nav-item" data-route="/cong-no">
+            <i class="fas fa-coins"></i><span>Công nợ</span>
+        </a>
+        <a href="#/khuyen-mai" class="npp-nav-item" data-route="/khuyen-mai">
+            <i class="fas fa-gift"></i><span>KM</span>
+        </a>
+    </nav>
+
+    <!-- Mount points for global UI -->
+    <div id="npp-toast-mount" class="npp-toast-mount"></div>
+    <div id="npp-modal-mount" class="npp-modal-mount"></div>
+    <div id="npp-loading-mount" class="npp-loading-mount" hidden>
+        <div class="npp-loading-spinner"></div>
+        <div class="npp-loading-text">Đang xử lý...</div>
+    </div>
+</div>
+
+<script type="module" src="/assets/npp/npp/shell.js?v={{ frappe.utils.now() }}"></script>
+{% endblock %}
