@@ -1,0 +1,2 @@
+# Frappe & ERPNext are provided by the bench environment.
+# Add Python dependencies here if needed.

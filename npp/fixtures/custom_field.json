@@ -1,0 +1,141 @@
+[
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_npp_section_break",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_npp_section_break",
+  "label": "Thông tin giao hàng NPP",
+  "fieldtype": "Section Break",
+  "insert_after": "amended_from",
+  "collapsible": 1,
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_hình_thức_vận_chuyển",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_hình_thức_vận_chuyển",
+  "label": "Hình thức vận chuyển",
+  "fieldtype": "Select",
+  "options": "\nXe HG\nXe NPP\nNhà xe\nKhách tự lấy",
+  "insert_after": "custom_npp_section_break",
+  "in_list_view": 1,
+  "in_standard_filter": 1,
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_chuyến_xe",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_chuyến_xe",
+  "label": "Chuyến xe",
+  "fieldtype": "Data",
+  "insert_after": "custom_hình_thức_vận_chuyển",
+  "in_standard_filter": 1,
+  "description": "Mã chuyến xe (group nhiều đơn cùng 1 chuyến)",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_xe",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_xe",
+  "label": "Xe (biển số)",
+  "fieldtype": "Data",
+  "insert_after": "custom_chuyến_xe",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_column_break_1",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_column_break_1",
+  "label": "",
+  "fieldtype": "Column Break",
+  "insert_after": "custom_xe",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_tên_lái_xe",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_tên_lái_xe",
+  "label": "Tên lái xe",
+  "fieldtype": "Data",
+  "insert_after": "custom_column_break_1",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_điện_thoại_lái_xe",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_điện_thoại_lái_xe",
+  "label": "Điện thoại lái xe",
+  "fieldtype": "Data",
+  "options": "Phone",
+  "insert_after": "custom_tên_lái_xe",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_trạng_thái_vận_chuyển",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_trạng_thái_vận_chuyển",
+  "label": "Trạng thái vận chuyển",
+  "fieldtype": "Select",
+  "options": "Chờ xử lý\nĐang giao\nĐã giao\nĐã hủy",
+  "default": "Chờ xử lý",
+  "insert_after": "custom_điện_thoại_lái_xe",
+  "in_list_view": 1,
+  "in_standard_filter": 1,
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_ghi_chú_npp",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_ghi_chú_npp",
+  "label": "Ghi chú từ NPP",
+  "fieldtype": "Small Text",
+  "insert_after": "custom_trạng_thái_vận_chuyển",
+  "description": "NPP để lại ghi chú khi đặt đơn (giờ giao, hàng ưu tiên, v.v.)",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Sales Invoice-custom_ghi_chú_giao_hàng",
+  "dt": "Sales Invoice",
+  "fieldname": "custom_ghi_chú_giao_hàng",
+  "label": "Ghi chú giao hàng (nội bộ)",
+  "fieldtype": "Small Text",
+  "insert_after": "custom_ghi_chú_npp",
+  "description": "Ghi chú nội bộ của kho/tài xế, không hiển thị cho NPP",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Item-custom_quy_cách",
+  "dt": "Item",
+  "fieldname": "custom_quy_cách",
+  "label": "Quy cách (hộp/thùng)",
+  "fieldtype": "Int",
+  "default": "1",
+  "insert_after": "stock_uom",
+  "non_negative": 1,
+  "description": "Số hộp trong 1 thùng. Dùng để tính giá thùng từ giá hộp.",
+  "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Item-custom_thể_tích",
+  "dt": "Item",
+  "fieldname": "custom_thể_tích",
+  "label": "Thể tích (cm³ mỗi hộp)",
+  "fieldtype": "Float",
+  "default": "0",
+  "insert_after": "custom_quy_cách",
+  "non_negative": 1,
+  "description": "Thể tích của 1 hộp (cm³). Dùng để tính tổng m³ chuyến xe.",
+  "module": "NPP Portal"
+ }
+]
