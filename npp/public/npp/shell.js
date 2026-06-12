@@ -26,13 +26,18 @@ document.getElementById('npp-btn-back')?.addEventListener('click', () => {
 });
 
 // ─── 5. Lazy-load views (code-split per route) ─────────────────────────
+// Cache-bust mỗi lần tải trang: Frappe serve /assets với cache 'immutable' 1
+// năm, nên view module lazy-load PHẢI mang query ?v=... nếu không trình duyệt
+// vẫn chạy code cũ sau khi deploy. assetVersion render mới ở mỗi full page load.
+const ASSET_V = encodeURIComponent(window.NPP_CONTEXT?.assetVersion || '');
+const withV = (path) => (ASSET_V ? `${path}?v=${ASSET_V}` : path);
 const VIEW_MODULES = {
-    '/'           : () => import('./views/dashboard.js'),
-    '/dat-hang'   : () => import('./views/dat-hang.js'),
-    '/don-hang'   : () => import('./views/don-hang.js'),
-    '/cong-no'    : () => import('./views/cong-no.js'),
-    '/khuyen-mai' : () => import('./views/khuyen-mai.js'),
-    '/thong-ke'   : () => import('./views/thong-ke.js'),
+    '/'           : () => import(withV('./views/dashboard.js')),
+    '/dat-hang'   : () => import(withV('./views/dat-hang.js')),
+    '/don-hang'   : () => import(withV('./views/don-hang.js')),
+    '/cong-no'    : () => import(withV('./views/cong-no.js')),
+    '/khuyen-mai' : () => import(withV('./views/khuyen-mai.js')),
+    '/thong-ke'   : () => import(withV('./views/thong-ke.js')),
 };
 
 async function renderRoute(routeKey, ctx) {

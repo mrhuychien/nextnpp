@@ -22,7 +22,10 @@
         customer: {{ customer|tojson }},
         customerName: {{ customer_name|tojson }},
         baseUrl: "{{ frappe.utils.get_url() }}",
-        csrfToken: "{{ frappe.session.csrf_token if frappe.session.csrf_token else '' }}"
+        csrfToken: "{{ frappe.session.csrf_token if frappe.session.csrf_token else '' }}",
+        // Đổi mỗi lần tải trang (server-rendered) → cache-bust cho view module
+        // lazy-load, vì /assets bị Frappe cache 'immutable' 1 năm.
+        assetVersion: {{ frappe.utils.now() | tojson }}
     };
 </script>
 {% endblock %}
