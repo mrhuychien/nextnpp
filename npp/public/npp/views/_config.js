@@ -44,9 +44,10 @@ export const ITEM_GROUPS = {
     },
 };
 
-// ─── Custom field map (Sales Invoice) ─────────────────────────────────
-// Tên field tiếng Việt có dấu — fixture trong npp/fixtures/custom_field.json
-// Khi anh muốn đổi tên field: sửa cả ở đây + fixture JSON + bench migrate.
+// ─── Field map (Sales Invoice) ────────────────────────────────────────
+// Custom field tiếng Việt có dấu — fixture trong npp/fixtures/custom_field.json.
+// net_weight là field CHUẨN của Sales Invoice (parent), KHÔNG phải custom.
+// Khi đổi tên field: sửa ở đây + fixture JSON (nếu là custom) + bench migrate.
 export const SI_FIELDS = {
     shipping_type:    'custom_hình_thức_vận_chuyển',
     chuyen_xe:        'custom_chuyến_xe',
@@ -56,14 +57,16 @@ export const SI_FIELDS = {
     delivery_status:  'custom_trạng_thái_vận_chuyển',
     note_npp:         'custom_ghi_chú_npp',
     note_internal:    'custom_ghi_chú_giao_hàng',
+    net_weight:       'total_net_weight',   // Standard ERPNext (kg) — Sales Invoice parent
 };
 
 // ─── Item custom + standard fields ────────────────────────────────────
+// Lưu ý: Item KHÔNG có total_weight/total_net_weight. Field cân nặng của Item
+// là 'weight_per_unit' (kg/đơn vị) — thêm vào đây nếu cần dùng trong catalog.
 export const ITEM_FIELDS = {
     quycach:    'custom_quy_cách',     // Custom — fixture
     the_tich:   'custom_thể_tích',     // Custom — fixture
     item_group: 'item_group',          // Standard ERPNext
-    weight:     'total_weight',        // Standard ERPNext (kg)
 };
 
 // ─── Delivery status enum (đồng bộ với fixture Select options) ───────

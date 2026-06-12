@@ -80,7 +80,7 @@ async function loadGroup(tabKey) {
         const items = await api.list('Item', {
             fields: [
                 'item_code', 'item_name', 'image', 'standard_rate',
-                'item_group', 'total_weight',
+                'item_group',
                 ITEM_FIELDS.quycach, ITEM_FIELDS.the_tich,
             ],
             filters: [['item_code', 'in', codes]],
