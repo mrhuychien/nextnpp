@@ -15,7 +15,7 @@ def require_customer() -> str:
     if frappe.session.user == "Guest":
         frappe.throw(_("Login required"), frappe.PermissionError)
 
-    customer = frappe.db.get_value("User", frappe.session.user, "customer")
+    customer = frappe.db.get_value("User", frappe.session.user, "custom_customer")
     if not customer:
         frappe.throw(
             _("User account is not linked to any Customer. Contact administrator."),

@@ -25,11 +25,11 @@ def get_context(context: dict) -> dict:
     user_doc = frappe.db.get_value(
         "User",
         frappe.session.user,
-        ["customer", "first_name", "full_name"],
+        ["custom_customer", "first_name", "full_name"],
         as_dict=True,
     ) or {}
 
-    customer = user_doc.get("customer")
+    customer = user_doc.get("custom_customer")
     customer_name = None
     if customer:
         customer_name = frappe.db.get_value("Customer", customer, "customer_name")

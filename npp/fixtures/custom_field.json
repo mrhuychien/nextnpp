@@ -137,5 +137,18 @@
   "non_negative": 1,
   "description": "Thể tích của 1 hộp (cm³). Dùng để tính tổng m³ chuyến xe.",
   "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "User-custom_customer",
+  "dt": "User",
+  "fieldname": "custom_customer",
+  "label": "NPP (Customer)",
+  "fieldtype": "Link",
+  "options": "Customer",
+  "insert_after": "last_name",
+  "no_copy": 1,
+  "description": "Liên kết tài khoản đăng nhập với NPP (Customer). Portal lọc toàn bộ dữ liệu theo field này.",
+  "module": "NPP Portal"
  }
 ]

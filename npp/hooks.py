@@ -36,7 +36,8 @@ website_redirects = [
 ]
 
 # ─────────────────────────────────────────────────────────────────────
-# Permissions — currently using standard User.customer mapping.
+# Permissions — User→Customer mapping via the custom field
+# User.custom_customer (shipped in fixtures/custom_field.json).
 # If multi-user-per-customer is needed later, plug in custom logic here.
 # ─────────────────────────────────────────────────────────────────────
 permission_query_conditions = {}
