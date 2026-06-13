@@ -26,7 +26,11 @@ export async function render({ container }) {
     `;
 
     try {
-        const data = await api.cached.dashboard();
+        // Timeout phòng skeleton kẹt vĩnh viễn nếu API treo — hiện lỗi thay vì ô trắng.
+        const data = await Promise.race([
+            api.cached.dashboard(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Máy chủ phản hồi quá lâu. Bấm làm mới để thử lại.')), 20000)),
+        ]);
         renderCards(data);
     } catch (err) {
         showToast('Lỗi tải dashboard: ' + err.message, 'error');

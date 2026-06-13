@@ -364,7 +364,11 @@
 }
 .npp-view-banner > * { position: relative; z-index: 1; }
 .npp-view-banner-title { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
-.npp-view-banner-subtitle { font-size: 0.85rem; color: rgba(255,255,255,0.7); margin-top: 2px; }
+.npp-view-banner-subtitle { font-size: 0.85rem; margin-top: 2px; }
+/* Chữ banner sáng trên nền tối — selector cụ thể + !important để THẮNG CSS
+   heading/paragraph của web template (Bootstrap/Frappe) khi nhúng trong Desk/web. */
+.npp-view-banner .npp-view-banner-title { color: #fff !important; }
+.npp-view-banner .npp-view-banner-subtitle { color: rgba(255,255,255,0.8) !important; }
 .npp-view-banner-badge {
     background: rgba(255,255,255,0.15);
     padding: 6px 12px;

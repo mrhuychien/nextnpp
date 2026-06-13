@@ -35,18 +35,21 @@ def summary() -> dict:
     # Order counts
     draft_count = frappe.db.count("Sales Invoice", {"customer": customer, "docstatus": 0})
 
-    # Đơn đang giao — query theo trạng thái vận chuyển (custom field, có dấu)
-    # Bắt buộc dùng backtick cho column name unicode
-    shipping_count = frappe.db.sql(
-        """
-        SELECT COUNT(*)
-        FROM `tabSales Invoice`
-        WHERE customer = %s
-          AND docstatus = 1
-          AND `custom_trạng_thái_vận_chuyển` IN ('Chờ xử lý', 'Đang giao')
-        """,
-        (customer,),
-    )[0][0] or 0
+    # Đơn đang giao — theo trạng thái vận chuyển (custom field). Bọc try/except:
+    # nếu field chưa cài / tên khác trên ERP thì KHÔNG làm vỡ cả dashboard.
+    try:
+        shipping_count = frappe.db.sql(
+            """
+            SELECT COUNT(*)
+            FROM `tabSales Invoice`
+            WHERE customer = %s
+              AND docstatus = 1
+              AND `custom_trạng_thái_vận_chuyển` IN ('Chờ xử lý', 'Đang giao')
+            """,
+            (customer,),
+        )[0][0] or 0
+    except Exception:
+        shipping_count = 0
 
     # Month aggregates
     month_rows = frappe.db.sql(
