@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Sales analytics for the NPP."""
+"""Sales analytics for the NPP.
+
+Doanh số/sản lượng KHÔNG tính hoá đơn opening (is_opening='Yes' = số dư đầu kỳ,
+không phải bán hàng thật) → mọi query lọc IFNULL(is_opening,'No') != 'Yes'.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ def sales_by_month(months: int = 12) -> list[dict]:
                COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
         FROM `tabSales Invoice`
         WHERE customer=%s AND docstatus=1 AND posting_date >= %s
+          AND IFNULL(is_opening, 'No') != 'Yes'
         GROUP BY DATE_FORMAT(posting_date, '%%m/%%Y')
         """,
         (customer, start),
@@ -35,6 +40,7 @@ def sales_by_month(months: int = 12) -> list[dict]:
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON sii.parent = si.name
         WHERE si.customer=%s AND si.docstatus=1 AND si.posting_date >= %s
+          AND IFNULL(si.is_opening, 'No') != 'Yes'
           AND sii.uom IN ('Thùng', 'Box')
         GROUP BY DATE_FORMAT(si.posting_date, '%%m/%%Y')
         """,
@@ -77,6 +83,7 @@ def top_items(months: int = 1, limit: int = 10, item_group: str | None = None) -
         JOIN `tabItem` i ON sii.item_code = i.item_code
         WHERE si.customer=%s AND si.docstatus=1
           AND si.posting_date >= %s
+          AND IFNULL(si.is_opening, 'No') != 'Yes'
           AND sii.uom IN ('Thùng', 'Box')
     """
     params = [customer, start]
@@ -115,6 +122,7 @@ def sales_by_item_group(months: int = 12) -> list[dict]:
         WHERE si.customer = %s
           AND si.docstatus = 1
           AND si.posting_date >= %s
+          AND IFNULL(si.is_opening, 'No') != 'Yes'
           AND sii.uom IN ('Thùng', 'Box')
         GROUP BY i.item_group
         ORDER BY amount DESC
@@ -129,7 +137,7 @@ def sales_by_item_group(months: int = 12) -> list[dict]:
 def kpi(months: int = 12) -> dict:
     """Số liệu tổng quan kỳ N tháng + tăng trưởng doanh số so với kỳ trước.
 
-    Tất cả lọc theo require_customer() → chỉ dữ liệu của NPP đang đăng nhập.
+    Loại hoá đơn opening. Tất cả lọc theo require_customer() → chỉ data NPP đó.
     """
     customer = require_customer()
     months = max(1, min(int(months or 12), 36))
@@ -144,6 +152,7 @@ def kpi(months: int = 12) -> dict:
         SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
         FROM `tabSales Invoice`
         WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
+          AND IFNULL(is_opening, 'No') != 'Yes'
         """,
         (customer, start, end),
         as_dict=True,
@@ -153,6 +162,7 @@ def kpi(months: int = 12) -> dict:
         SELECT COALESCE(SUM(grand_total), 0)
         FROM `tabSales Invoice`
         WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
+          AND IFNULL(is_opening, 'No') != 'Yes'
         """,
         (customer, prev_start, prev_end),
     )[0][0] or 0
@@ -163,6 +173,7 @@ def kpi(months: int = 12) -> dict:
         JOIN `tabSales Invoice` si ON sii.parent = si.name
         WHERE si.customer=%s AND si.docstatus=1
           AND si.posting_date BETWEEN %s AND %s
+          AND IFNULL(si.is_opening, 'No') != 'Yes'
           AND sii.uom IN ('Thùng', 'Box')
         """,
         (customer, start, end),

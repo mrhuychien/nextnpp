@@ -57,6 +57,7 @@ def summary() -> dict:
         SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
         FROM `tabSales Invoice`
         WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
+          AND IFNULL(is_opening, 'No') != 'Yes'
         """,
         (customer, month_start, month_end),
         as_dict=True,
@@ -71,6 +72,7 @@ def summary() -> dict:
         JOIN `tabSales Invoice` si ON sii.parent = si.name
         WHERE si.customer=%s AND si.docstatus=1
           AND si.posting_date BETWEEN %s AND %s
+          AND IFNULL(si.is_opening, 'No') != 'Yes'
           AND sii.uom IN ('Thùng', 'Box')
         """,
         (customer, month_start, month_end),
