@@ -6,11 +6,11 @@ import { showLoading, hideLoading } from '../components/loading.js';
 import { showModal, closeModal } from '../components/modal.js';
 // _config.js nạp ĐỘNG kèm ?v= để bust cache 'immutable' của /assets — đổi tên
 // field/config có hiệu lực chỉ với F5, không cần hard-refresh.
-let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, cleanItemName;
+let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, ZALO_PHONE, cleanItemName;
 async function loadConfig() {
     const v = encodeURIComponent(window.NPP_CONTEXT?.assetVersion || '');
     const cfg = await import(v ? `./_config.js?v=${v}` : './_config.js');
-    ({ PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, cleanItemName } = cfg);
+    ({ PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, ZALO_PHONE, cleanItemName } = cfg);
 }
 
 const QTY = {};   // item_code → qty (số thùng)
@@ -239,10 +239,7 @@ function updateSummary() {
     sum.innerHTML = html`<strong>${qty}</strong> thùng · <strong>${formatNumber(amount)}đ</strong> · <strong>${volume.toFixed(2)} m³</strong>`;
 }
 
-function openOrderReview() {
-    const { qty, amount } = calcTotals();
-    if (qty === 0) return showToast('Chọn ít nhất 1 sản phẩm', 'warning');
-
+function buildRows() {
     const rows = [];
     for (const [code, q] of Object.entries(QTY)) {
         if (!q) continue;
@@ -250,29 +247,47 @@ function openOrderReview() {
         const price = pricesCache[code];
         if (!item || !price) continue;
         const quycach = parseInt(item[ITEM_FIELDS.quycach], 10) || 1;
-        rows.push({ code, name: cleanItemName(item.item_name), qty: q, rate: price * quycach, amount: q * price * quycach, quycach });
+        rows.push({ code, name: cleanItemName(item.item_name), qty: q, rate: price * quycach, amount: q * price * quycach });
     }
+    return rows;
+}
+
+// ─── Bước 2: review đơn — sửa số lượng ngay, tổng tiền cập nhật realtime ───
+function openOrderReview() {
+    if (calcTotals().qty === 0) return showToast('Chọn ít nhất 1 sản phẩm', 'warning');
+    const rows = buildRows();
+    const t = calcTotals();
 
     const body = html`
-        <table class="npp-table">
-            <thead><tr><th>Sản phẩm</th><th>SL</th><th>Tiền</th></tr></thead>
+        <table class="npp-table" id="npp-review-table">
+            <thead><tr>
+                <th>Sản phẩm</th>
+                <th class="npp-text-center">SL thùng</th>
+                <th class="npp-text-end">Giá/thùng</th>
+                <th class="npp-text-end">Tiền</th>
+            </tr></thead>
             <tbody>
-                ${rows.map((r) => html`<tr>
+                ${rows.map((r) => html`<tr data-code="${escapeHtml(r.code)}" data-rate="${r.rate}">
                     <td data-label="Sản phẩm">${escapeHtml(r.name)}</td>
-                    <td data-label="SL">${r.qty}</td>
-                    <td data-label="Tiền">${formatNumber(r.amount)}đ</td>
+                    <td data-label="SL thùng" class="npp-text-center">
+                        <div class="npp-qty-control">
+                            <button class="npp-qty-btn" data-act="dec" type="button">−</button>
+                            <input class="npp-qty-input npp-review-qty" type="number" min="0" max="999" value="${r.qty}">
+                            <button class="npp-qty-btn" data-act="inc" type="button">+</button>
+                        </div>
+                    </td>
+                    <td data-label="Giá/thùng" class="npp-text-end">${formatNumber(r.rate)}đ</td>
+                    <td data-label="Tiền" class="npp-text-end npp-review-amt">${formatNumber(r.amount)}đ</td>
                 </tr>`).join('')}
             </tbody>
         </table>
         <div class="npp-card npp-mt-3 npp-flex npp-justify-between">
             <span>Tổng (giá niêm yết):</span>
-            <strong>${formatNumber(amount)}đ</strong>
+            <strong id="npp-review-total">${t.qty} thùng · ${formatNumber(t.amount)}đ · ${t.volume.toFixed(2)} m³</strong>
         </div>
         <div class="npp-mt-3">
             <label for="npp-dh-note" class="npp-text-sm npp-font-bold">Ghi chú (tuỳ chọn)</label>
-            <textarea id="npp-dh-note"
-                      class="npp-textarea npp-mt-2"
-                      rows="2"
+            <textarea id="npp-dh-note" class="npp-textarea npp-mt-2" rows="2"
                       placeholder="VD: Giao trước 9h sáng, ưu tiên hàng Tết..."></textarea>
         </div>
         <p class="npp-text-sm npp-text-muted npp-mt-2 npp-text-center">
@@ -280,36 +295,153 @@ function openOrderReview() {
         </p>
     `;
     const footer = html`<button class="npp-btn-primary" id="npp-dh-confirm" type="button">
-        <i class="fas fa-check"></i> ${editingOrder ? 'Cập nhật đơn' : 'Xác nhận gửi đơn'}
+        <i class="fas fa-check"></i> ${editingOrder ? 'Cập nhật đơn' : 'Gửi đơn hàng'}
     </button>`;
     showModal({ title: editingOrder ? `Cập nhật đơn ${escapeHtml(editingOrder)}` : 'Xác nhận đơn hàng', body, footer });
+
     const noteEl = document.getElementById('npp-dh-note');
     if (noteEl && editNote) noteEl.value = editNote;
-    document.getElementById('npp-dh-confirm').addEventListener('click', () => submitOrder(rows));
+
+    // Sửa SL ngay trong bảng review → cập nhật QTY + tổng tiền theo thời gian thực.
+    const table = document.getElementById('npp-review-table');
+    table.addEventListener('click', (e) => {
+        const btn = e.target.closest('.npp-qty-btn');
+        if (!btn) return;
+        const input = btn.parentElement.querySelector('.npp-review-qty');
+        let v = parseInt(input.value, 10) || 0;
+        v = btn.dataset.act === 'inc' ? Math.min(999, v + 1) : Math.max(0, v - 1);
+        input.value = v;
+        recomputeReview();
+    });
+    table.addEventListener('input', (e) => {
+        if (!e.target.classList.contains('npp-review-qty')) return;
+        e.target.value = Math.min(999, Math.max(0, parseInt(e.target.value, 10) || 0));
+        recomputeReview();
+    });
+
+    document.getElementById('npp-dh-confirm').addEventListener('click', () => {
+        const finalRows = buildRows();
+        if (finalRows.length === 0) return showToast('Chọn ít nhất 1 sản phẩm', 'warning');
+        submitOrder(finalRows);
+    });
 }
 
+function recomputeReview() {
+    const table = document.getElementById('npp-review-table');
+    if (!table) return;
+    table.querySelectorAll('tbody tr').forEach((tr) => {
+        const code = tr.dataset.code;
+        const rate = parseFloat(tr.dataset.rate) || 0;
+        const q = parseInt(tr.querySelector('.npp-review-qty').value, 10) || 0;
+        QTY[code] = q;
+        tr.querySelector('.npp-review-amt').textContent = formatNumber(q * rate) + 'đ';
+    });
+    const t = calcTotals();
+    const totalEl = document.getElementById('npp-review-total');
+    if (totalEl) totalEl.textContent = `${t.qty} thùng · ${formatNumber(t.amount)}đ · ${t.volume.toFixed(2)} m³`;
+    updateSummary();
+}
+
+// ─── Bước 3: gửi đơn → modal thành công (Zalo / quản lý / sửa / xóa) ──────
 async function submitOrder(rows) {
     const isEdit = !!editingOrder;
     showLoading(isEdit ? 'Đang cập nhật đơn...' : 'Đang tạo đơn...');
     try {
         const noteEl = document.getElementById('npp-dh-note');
         const note = noteEl ? noteEl.value.trim() : '';
-        // Gửi số THÙNG cho server; server tự quy đổi + áp giá (gồm khuyến mãi).
+        const totals = calcTotals();   // chốt tổng TRƯỚC khi xoá giỏ
         const payload = rows.map((r) => ({ item_code: r.code, cases: r.qty }));
         const inv = isEdit
             ? await api.call('npp.api.orders.update_order', { invoice: editingOrder, items: JSON.stringify(payload), note })
             : await api.call('npp.api.orders.create_order', { items: JSON.stringify(payload), note });
 
-        closeModal();
-        showToast(isEdit ? `Đã cập nhật đơn ${inv.name}` : `Đã tạo đơn ${inv.name}`, 'success');
-        Object.keys(QTY).forEach((k) => delete QTY[k]);   // clear cart
+        const wasEdit = isEdit;
         editingOrder = null;
         editNote = '';
-        location.hash = `#/don-hang/${encodeURIComponent(inv.name)}`;
+        Object.keys(QTY).forEach((k) => delete QTY[k]);   // clear cart
+        updateSummary();
+        showToast(wasEdit ? `Đã cập nhật đơn ${inv.name}` : `Đã tạo đơn ${inv.name}`, 'success');
+        showSuccessModal(inv.name, rows, totals);
     } catch (err) {
         showToast('Lỗi: ' + (err.message || (isEdit ? 'Không cập nhật được đơn' : 'Không tạo được đơn')), 'error');
     } finally {
-        // LUÔN tắt spinner — hết "quay tròn" kể cả khi lỗi/timeout.
+        hideLoading();   // LUÔN tắt spinner
+    }
+}
+
+function showSuccessModal(name, rows, totals) {
+    const msg = buildZaloMessage(name, rows, totals);
+    const body = html`
+        <pre class="npp-zalo-msg" style="white-space:pre-wrap;font-family:monospace;background:var(--npp-surface-2);border:1px solid var(--npp-border);padding:12px;border-radius:10px;max-height:280px;overflow:auto;font-size:.82rem;line-height:1.5;">${escapeHtml(msg)}</pre>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;">
+            <button class="npp-btn-primary" id="npp-su-zalo" type="button"><i class="fab fa-whatsapp"></i> Sao chép &amp; gửi Zalo</button>
+            <button class="npp-btn-primary" id="npp-su-manage" type="button"><i class="fas fa-list"></i> Quản lý đơn</button>
+            <button class="npp-btn-primary" id="npp-su-edit" type="button"><i class="fas fa-pen"></i> Sửa đơn</button>
+            <button class="npp-btn-danger" id="npp-su-delete" type="button"><i class="fas fa-trash"></i> Xóa đơn</button>
+        </div>
+    `;
+    showModal({ title: '✅ Đặt hàng thành công', body });
+    document.getElementById('npp-su-zalo').addEventListener('click', () => copyZalo(msg));
+    document.getElementById('npp-su-manage').addEventListener('click', () => { closeModal(); location.hash = '#/don-hang'; });
+    document.getElementById('npp-su-edit').addEventListener('click', () => { closeModal(); location.hash = '#/dat-hang?edit=' + encodeURIComponent(name); });
+    document.getElementById('npp-su-delete').addEventListener('click', () => deleteAndClose(name));
+}
+
+function categoryLabelOf(code) {
+    for (const g of Object.values(ITEM_GROUPS)) {
+        if ((g.items || []).includes(code)) return (g.item_group_name || g.label || 'Khác');
+    }
+    return 'Khác';
+}
+
+function buildZaloMessage(name, rows, totals) {
+    const today = new Date().toLocaleDateString('vi-VN');
+    const ctx = window.NPP_CONTEXT || {};
+    const dist = ctx.customerName || ctx.customer || '';
+    const groups = {};
+    let counter = 1;
+    rows.forEach((r) => {
+        if (!r.qty) return;
+        const label = categoryLabelOf(r.code).toUpperCase();
+        (groups[label] = groups[label] || []).push(`${counter++}. ${r.name}: ${r.qty} thùng`);
+    });
+    let msg = `📦 ĐƠN ĐẶT HÀNG\nNgày: ${today}\nNhà Phân Phối: ${dist}\n-----------------------------------`;
+    for (const [label, lines] of Object.entries(groups)) {
+        msg += `\n${label}:\n${lines.join('\n')}\n-----------------------------------`;
+    }
+    msg += `\nTỔNG THÙNG: ${totals.qty} thùng\nTHỂ TÍCH: ${totals.volume.toFixed(2)} m³\nTỔNG TIỀN: ${formatNumber(totals.amount)} VNĐ\n\nĐơn hàng: ${name}`;
+    return msg;
+}
+
+function copyZalo(msg) {
+    const done = () => {
+        showToast('Đã sao chép — mở Zalo...', 'success');
+        if (ZALO_PHONE) window.open(`https://zalo.me/${ZALO_PHONE}`, '_blank');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(msg).then(done).catch(() => showToast('Lỗi sao chép', 'error'));
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = msg;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); }
+        catch { showToast('Lỗi sao chép', 'error'); }
+        finally { document.body.removeChild(ta); }
+    }
+}
+
+async function deleteAndClose(name) {
+    if (!confirm(`Xóa đơn ${name}?`)) return;
+    showLoading('Đang xóa đơn...');
+    try {
+        await api.remove('Sales Invoice', name);
+        closeModal();
+        showToast('Đã xóa đơn', 'success');
+        location.hash = '#/don-hang';
+    } catch (err) {
+        showToast('Lỗi xóa: ' + (err.message || ''), 'error');
+    } finally {
         hideLoading();
     }
 }
