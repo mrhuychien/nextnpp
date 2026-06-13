@@ -6,23 +6,44 @@ import { showLoading, hideLoading } from '../components/loading.js';
 import { showModal, closeModal } from '../components/modal.js';
 // _config.js nạp ĐỘNG kèm ?v= để bust cache 'immutable' của /assets — đổi tên
 // field/config có hiệu lực chỉ với F5, không cần hard-refresh.
-let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName;
+let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, cleanItemName;
 async function loadConfig() {
     const v = encodeURIComponent(window.NPP_CONTEXT?.assetVersion || '');
     const cfg = await import(v ? `./_config.js?v=${v}` : './_config.js');
-    ({ PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName } = cfg);
+    ({ PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, cleanItemName } = cfg);
 }
 
-const QTY = {};   // item_code → qty
+const QTY = {};   // item_code → qty (số thùng)
 let activeTab = 'traditional';
 let itemsCache = {};  // item_code → item doc
 let pricesCache = {}; // item_code → rate
 let containerEl = null;
+let editingOrder = null;   // tên SI đang sửa (null = tạo đơn mới)
+let editNote = '';         // ghi chú prefill khi sửa
 
-export async function render({ container }) {
+export async function render({ container, query }) {
     await loadConfig();   // nạp _config.js (versioned) trước khi dùng
     containerEl = container;
+
+    // Edit-mode: /dat-hang?edit=<tên SI nháp> — prefill số lượng để cập nhật.
+    const editName = (query && query.edit) || null;
+    if (editName) {
+        if (editingOrder !== editName) {
+            editingOrder = editName;
+            await prefillFromOrder(editName);
+        }
+    } else if (editingOrder) {
+        // Rời chế độ sửa → reset giỏ để không tạo nhầm đơn mới từ đơn cũ.
+        editingOrder = null;
+        editNote = '';
+        Object.keys(QTY).forEach((k) => delete QTY[k]);
+    }
+
     container.innerHTML = html`
+        ${editingOrder ? html`<div class="npp-card" style="margin-bottom:12px;border-left:3px solid var(--npp-season-1);">
+            <i class="fas fa-pen"></i> Đang sửa đơn <strong>${escapeHtml(editingOrder)}</strong> —
+            chỉnh số lượng rồi bấm <strong>Cập nhật đơn</strong>.
+        </div>` : ''}
         <div class="npp-dh-tabs">
             ${Object.entries(ITEM_GROUPS).map(([key, g]) => html`
                 <button class="npp-dh-tab ${key === activeTab ? 'npp-active' : ''}" data-tab="${key}" type="button">
@@ -37,7 +58,7 @@ export async function render({ container }) {
         <div class="npp-dh-grid" id="npp-dh-grid"></div>
         <div class="npp-dh-summary" id="npp-dh-summary" hidden></div>
         <button class="npp-dh-cta" id="npp-dh-cta" type="button">
-            <i class="fas fa-paper-plane"></i> Lên đơn hàng
+            ${editingOrder ? '<i class="fas fa-save"></i> Cập nhật đơn' : '<i class="fas fa-paper-plane"></i> Lên đơn hàng'}
         </button>
     `;
 
@@ -76,6 +97,44 @@ export async function render({ container }) {
     });
 
     await loadGroup(activeTab);
+}
+
+async function prefillFromOrder(name) {
+    let doc;
+    try {
+        doc = await api.get('Sales Invoice', name);
+    } catch (err) {
+        showToast('Không tải được đơn để sửa: ' + (err.message || ''), 'error');
+        editingOrder = null;
+        return;
+    }
+    const lines = doc.items || [];
+    const codes = [...new Set(lines.map((l) => l.item_code).filter(Boolean))];
+
+    // Nạp chi tiết + giá cho MỌI item của đơn (kể cả khác tab) để submit không sót.
+    if (codes.length) {
+        try {
+            const items = await api.list('Item', {
+                fields: ['item_code', 'item_name', 'image', 'standard_rate', 'item_group', ITEM_FIELDS.quycach, ITEM_FIELDS.the_tich],
+                filters: [['item_code', 'in', codes]],
+                limit: 0,
+            });
+            items.forEach((it) => itemsCache[it.item_code] = it);
+            const prices = await api.list('Item Price', {
+                fields: ['item_code', 'price_list_rate'],
+                filters: [['item_code', 'in', codes], ['price_list', '=', PRICE_LIST]],
+                order_by: 'modified desc',
+                limit: 0,
+            });
+            prices.forEach((p) => { if (!(p.item_code in pricesCache)) pricesCache[p.item_code] = p.price_list_rate; });
+            items.forEach((it) => { if (!(it.item_code in pricesCache) && it.standard_rate) pricesCache[it.item_code] = it.standard_rate; });
+        } catch { /* lỗi giá/chi tiết không chặn việc prefill số lượng */ }
+    }
+
+    // QTY = số thùng từ các dòng đơn (đơn đặt theo uom 'Thùng').
+    Object.keys(QTY).forEach((k) => delete QTY[k]);
+    lines.forEach((l) => { QTY[l.item_code] = (QTY[l.item_code] || 0) + (parseInt(l.qty, 10) || 0); });
+    editNote = doc[SI_FIELDS.note_npp] || '';
 }
 
 async function loadGroup(tabKey) {
@@ -221,32 +280,34 @@ function openOrderReview() {
         </p>
     `;
     const footer = html`<button class="npp-btn-primary" id="npp-dh-confirm" type="button">
-        <i class="fas fa-check"></i> Xác nhận gửi đơn
+        <i class="fas fa-check"></i> ${editingOrder ? 'Cập nhật đơn' : 'Xác nhận gửi đơn'}
     </button>`;
-    showModal({ title: 'Xác nhận đơn hàng', body, footer });
+    showModal({ title: editingOrder ? `Cập nhật đơn ${escapeHtml(editingOrder)}` : 'Xác nhận đơn hàng', body, footer });
+    const noteEl = document.getElementById('npp-dh-note');
+    if (noteEl && editNote) noteEl.value = editNote;
     document.getElementById('npp-dh-confirm').addEventListener('click', () => submitOrder(rows));
 }
 
 async function submitOrder(rows) {
-    showLoading('Đang tạo đơn...');
+    const isEdit = !!editingOrder;
+    showLoading(isEdit ? 'Đang cập nhật đơn...' : 'Đang tạo đơn...');
     try {
         const noteEl = document.getElementById('npp-dh-note');
         const note = noteEl ? noteEl.value.trim() : '';
-        // Gửi số THÙNG cho server; server tự quy đổi qty = thùng × quy cách và
-        // tự áp giá theo bảng giá (gồm khuyến mãi). Không tạo Sales Invoice ở
-        // client để tránh phụ thuộc UOM 'Thùng' và quyền tạo SI từ portal.
+        // Gửi số THÙNG cho server; server tự quy đổi + áp giá (gồm khuyến mãi).
         const payload = rows.map((r) => ({ item_code: r.code, cases: r.qty }));
-        const inv = await api.call('npp.api.orders.create_order', {
-            items: JSON.stringify(payload),
-            note,
-        });
+        const inv = isEdit
+            ? await api.call('npp.api.orders.update_order', { invoice: editingOrder, items: JSON.stringify(payload), note })
+            : await api.call('npp.api.orders.create_order', { items: JSON.stringify(payload), note });
 
         closeModal();
-        showToast(`Đã tạo đơn ${inv.name}`, 'success');
+        showToast(isEdit ? `Đã cập nhật đơn ${inv.name}` : `Đã tạo đơn ${inv.name}`, 'success');
         Object.keys(QTY).forEach((k) => delete QTY[k]);   // clear cart
+        editingOrder = null;
+        editNote = '';
         location.hash = `#/don-hang/${encodeURIComponent(inv.name)}`;
     } catch (err) {
-        showToast('Lỗi: ' + (err.message || 'Không tạo được đơn'), 'error');
+        showToast('Lỗi: ' + (err.message || (isEdit ? 'Không cập nhật được đơn' : 'Không tạo được đơn')), 'error');
     } finally {
         // LUÔN tắt spinner — hết "quay tròn" kể cả khi lỗi/timeout.
         hideLoading();

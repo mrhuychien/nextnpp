@@ -157,6 +157,7 @@ async function renderDetail({ container, name, query }) {
 
                 ${inv.docstatus === 0 ? html`
                 <div class="npp-flex npp-gap-2 npp-mt-4">
+                    <button class="npp-btn-primary" id="npp-edit" type="button"><i class="fas fa-pen"></i> Sửa</button>
                     <button class="npp-btn-primary" id="npp-back-list" type="button"><i class="fas fa-arrow-left"></i> Quay lại</button>
                     <button class="npp-btn-danger" id="npp-delete" type="button"><i class="fas fa-trash"></i> Xóa</button>
                 </div>` : html`
@@ -169,6 +170,10 @@ async function renderDetail({ container, name, query }) {
         document.getElementById('npp-back-list').addEventListener('click', () => location.hash = '#/don-hang');
         if (inv.docstatus === 0) {
             document.getElementById('npp-delete').addEventListener('click', () => deleteOrder(inv.name));
+            // Sửa đơn nháp = quay lại màn đặt hàng (prefill số lượng) để cập nhật.
+            document.getElementById('npp-edit').addEventListener('click', () => {
+                location.hash = '#/dat-hang?edit=' + encodeURIComponent(inv.name);
+            });
         }
     } catch (err) {
         container.innerHTML = `<div class="npp-empty"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;

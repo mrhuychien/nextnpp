@@ -29,7 +29,7 @@ website_redirects = [
     {"source": r"/don-hang", "target": "/npp#/don-hang", "redirect_http_status": 301},
     {
         "source": r"/cap-nhat-hoa-don/(?P<name>[^/]+)/edit",
-        "target": "/npp#/don-hang/{name}?edit=1",
+        "target": "/npp#/dat-hang?edit={name}",
         "redirect_http_status": 301,
         "match_with_query_string": False,
     },
