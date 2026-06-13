@@ -38,6 +38,7 @@ const VIEW_MODULES = {
     '/cong-no'    : () => import(withV('./views/cong-no.js')),
     '/khuyen-mai' : () => import(withV('./views/khuyen-mai.js')),
     '/thong-ke'   : () => import(withV('./views/thong-ke.js')),
+    '/quan-ly'    : () => import(withV('./views/quan-ly.js')),
 };
 
 async function renderRoute(routeKey, ctx) {
@@ -63,6 +64,7 @@ router.add('/don-hang/:name',          ({ params, query }) => { highlightActiveR
 router.add('/cong-no',                 ({ query }) => { highlightActiveRoute('/cong-no');    return renderRoute('/cong-no',    { query }); });
 router.add('/khuyen-mai',              ({ query }) => { highlightActiveRoute('/khuyen-mai'); return renderRoute('/khuyen-mai', { query }); });
 router.add('/thong-ke',                ({ query }) => { highlightActiveRoute('/thong-ke');   return renderRoute('/thong-ke',   { query }); });
+router.add('/quan-ly',                 ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/quan-ly',    { query }); });
 
 // ─── 7. Header title sync ──────────────────────────────────────────────
 const TITLES = {
@@ -72,6 +74,7 @@ const TITLES = {
     '/cong-no'    : 'Công nợ',
     '/khuyen-mai' : 'Khuyến mãi',
     '/thong-ke'   : 'Thống kê',
+    '/quan-ly'    : 'Quản lý NPP',
 };
 
 router.setBeforeNavigate(({ path }) => {
@@ -82,7 +85,27 @@ router.setBeforeNavigate(({ path }) => {
     if (backBtn) backBtn.hidden = !isDetail;
 });
 
-// ─── 8. Start ──────────────────────────────────────────────────────────
+// ─── 8. Manager entry (chỉ hiện cho role quản lý) ──────────────────────
+if (window.NPP_CONTEXT?.isManager) {
+    const actions = document.querySelector('.npp-header-actions');
+    if (actions && !document.getElementById('npp-btn-manager')) {
+        const btn = document.createElement('button');
+        btn.id = 'npp-btn-manager';
+        btn.className = 'npp-icon-btn';
+        btn.type = 'button';
+        btn.title = 'Quản lý NPP';
+        btn.setAttribute('aria-label', 'Quản lý NPP');
+        btn.innerHTML = '<i class="fas fa-users"></i>';
+        btn.addEventListener('click', () => { location.hash = '#/quan-ly'; });
+        actions.insertBefore(btn, actions.firstChild);
+    }
+    // Quản lý không gắn NPP riêng → vào thẳng trang tổng quan.
+    if (!window.NPP_CONTEXT.customer && ['', '#', '#/'].includes(location.hash)) {
+        location.hash = '#/quan-ly';
+    }
+}
+
+// ─── 9. Start ──────────────────────────────────────────────────────────
 router.start();
 
 // Expose minimal debug surface

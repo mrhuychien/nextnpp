@@ -14,9 +14,9 @@ from ._utils import require_customer
 
 
 @frappe.whitelist()
-def sales_by_month(months: int = 12) -> list[dict]:
+def sales_by_month(months: int = 12, customer: str | None = None) -> list[dict]:
     """Doanh số + sản lượng (thùng) theo từng tháng, N tháng gần nhất."""
-    customer = require_customer()
+    customer = require_customer(customer)
     months = max(1, min(int(months or 12), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
@@ -66,9 +66,9 @@ def sales_by_month(months: int = 12) -> list[dict]:
 
 
 @frappe.whitelist()
-def top_items(months: int = 1, limit: int = 10, item_group: str | None = None) -> list[dict]:
+def top_items(months: int = 1, limit: int = 10, item_group: str | None = None, customer: str | None = None) -> list[dict]:
     """Top items by qty over last N months. Optional filter by item_group."""
-    customer = require_customer()
+    customer = require_customer(customer)
     months = max(1, min(int(months or 1), 12))
     limit = max(1, min(int(limit or 10), 50))
     today = getdate()
@@ -104,9 +104,9 @@ def top_items(months: int = 1, limit: int = 10, item_group: str | None = None) -
 
 
 @frappe.whitelist()
-def sales_by_item_group(months: int = 12) -> list[dict]:
+def sales_by_item_group(months: int = 12, customer: str | None = None) -> list[dict]:
     """Doanh số chia theo item_group (Hàng truyền thống / Hàng Tết / ...)."""
-    customer = require_customer()
+    customer = require_customer(customer)
     months = max(1, min(int(months or 12), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
@@ -134,12 +134,12 @@ def sales_by_item_group(months: int = 12) -> list[dict]:
 
 
 @frappe.whitelist()
-def kpi(months: int = 12) -> dict:
+def kpi(months: int = 12, customer: str | None = None) -> dict:
     """Số liệu tổng quan kỳ N tháng + tăng trưởng doanh số so với kỳ trước.
 
     Loại hoá đơn opening. Tất cả lọc theo require_customer() → chỉ data NPP đó.
     """
-    customer = require_customer()
+    customer = require_customer(customer)
     months = max(1, min(int(months or 12), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))

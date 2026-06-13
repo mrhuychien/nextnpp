@@ -10,8 +10,8 @@ from ._utils import require_customer
 
 
 @frappe.whitelist()
-def summary() -> dict:
-    customer = require_customer()
+def summary(customer: str | None = None) -> dict:
+    customer = require_customer(customer)
     rows = frappe.db.sql(
         """
         SELECT name, posting_date, due_date, outstanding_amount, status
@@ -46,8 +46,8 @@ def summary() -> dict:
 
 
 @frappe.whitelist()
-def aging() -> dict:
-    customer = require_customer()
+def aging(customer: str | None = None) -> dict:
+    customer = require_customer(customer)
     today = getdate()
     rows = frappe.db.sql(
         """
@@ -74,14 +74,14 @@ def aging() -> dict:
 
 
 @frappe.whitelist()
-def payment_due() -> dict:
+def payment_due(customer: str | None = None) -> dict:
     """'Cần thanh toán' theo chính sách Tết/thường — CHỈ cho NPP đang đăng nhập.
 
     - Tết (tháng 11..2): được nợ 50% tổng HĐ từ 01/11; cần TT = nợ - 50%.
     - Thường: cần TT = tổng dư nợ của HĐ đã quá 30 ngày kể từ ngày HĐ.
     Mọi truy vấn lọc theo require_customer() → KHÔNG lộ dữ liệu NPP khác.
     """
-    customer = require_customer()
+    customer = require_customer(customer)
     today = getdate()
     month = today.month
     is_tet = month >= 11 or month <= 2

@@ -6,6 +6,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
+from npp.api._utils import is_manager
+
 no_cache = 1  # SPA shell, no server-side caching
 
 
@@ -42,6 +44,7 @@ def get_context(context: dict) -> dict:
             "user_full_name": user_doc.get("full_name") or "",
             "customer": customer or "",
             "customer_name": customer_name or "",
+            "is_manager": 1 if is_manager() else 0,
             "no_cache": 1,
         }
     )

@@ -10,9 +10,9 @@ from ._utils import require_customer
 
 
 @frappe.whitelist()
-def summary() -> dict:
+def summary(customer: str | None = None) -> dict:
     """Return aggregate metrics shown on the NPP dashboard."""
-    customer = require_customer()
+    customer = require_customer(customer)
     today = getdate()
     month_start = get_first_day(today)
     month_end = get_last_day(today)
