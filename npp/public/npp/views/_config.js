@@ -65,7 +65,7 @@ export const SI_FIELDS = {
 // là 'weight_per_unit' (kg/đơn vị) — thêm vào đây nếu cần dùng trong catalog.
 export const ITEM_FIELDS = {
     quycach:    'custom_quycach',      // Item master field (ERP quản lý) — số hộp/thùng
-    the_tich:   'custom_thể_tích',     // ⚠️ cần xác nhận tên field THẬT trong ERP
+    the_tich:   'custom_thể_tích',     // Item master field (ERP) — thể tích/hộp
     item_group: 'item_group',          // Standard ERPNext
 };
 

@@ -92,18 +92,21 @@ def summary() -> dict:
 
 def _count_active_promotions(customer: str) -> int:
     """Count Pricing Rules currently valid for this customer."""
+    # Customer của Pricing Rule nằm TRỰC TIẾP ở tabPricing Rule.customer
+    # (applicable_for='Customer'). KHÔNG ở 'Pricing Rule Detail' — bảng đó không
+    # có cột customer; join cũ gây "Unknown column 'prd.customer'" làm CHẾT cả
+    # dashboard (4 ô trắng).
     return frappe.db.sql(
         """
-        SELECT COUNT(DISTINCT pr.name)
+        SELECT COUNT(*)
         FROM `tabPricing Rule` pr
-        LEFT JOIN `tabPricing Rule Detail` prd ON prd.parent = pr.name AND prd.parenttype = 'Pricing Rule'
         WHERE pr.disable = 0
           AND (pr.valid_from IS NULL OR pr.valid_from <= CURDATE())
           AND (pr.valid_upto IS NULL OR pr.valid_upto >= CURDATE())
           AND (
               pr.applicable_for = ''
               OR pr.applicable_for IS NULL
-              OR (pr.applicable_for = 'Customer' AND prd.customer = %s)
+              OR (pr.applicable_for = 'Customer' AND pr.customer = %s)
           )
         """,
         (customer,),
