@@ -479,6 +479,36 @@
 .npp-dash-chev  { color: var(--npp-text-3); }
 .npp-dash-debt .npp-dash-value { color: var(--npp-danger); }
 
+/* ─── Công nợ (self-view nâng cấp) ─── */
+.npp-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem; }
+.npp-kpi-card {
+    background: var(--npp-surface);
+    border: 1px solid var(--npp-border);
+    border-radius: var(--npp-radius-md);
+    padding: 1rem;
+}
+.npp-kpi-label { font-size: 0.7rem; color: var(--npp-text-3); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+.npp-kpi-value { font-size: 1.35rem; font-weight: 800; margin-top: 4px; color: var(--npp-text); }
+.npp-kpi-value.warning { color: var(--npp-warning); }
+.npp-kpi-value.danger { color: var(--npp-danger); }
+.npp-kpi-sub { font-size: 0.72rem; color: var(--npp-text-2); margin-top: 2px; }
+.npp-policy-card {
+    display: flex; gap: 0.75rem; align-items: flex-start;
+    border-radius: var(--npp-radius-md);
+    padding: 1rem; margin-top: 1rem;
+}
+.npp-policy-card.tet    { background: #fff1f2; border: 1px solid #fecdd3; }
+.npp-policy-card.normal { background: #ecfdf5; border: 1px solid #bbf7d0; }
+.npp-policy-icon { font-size: 1.6rem; line-height: 1; }
+.npp-policy-card h4 { font-weight: 800; color: var(--npp-text); margin-bottom: 2px; }
+.npp-policy-card p  { font-size: 0.8rem; color: var(--npp-text-2); }
+.npp-cn-clickable {
+    color: var(--npp-warning); font-weight: 800; cursor: pointer;
+    background: none; border: none; padding: 0; font-size: inherit;
+    text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px;
+}
+.npp-cn-clickable:hover { text-decoration-style: solid; }
+
 .npp-cta-block {
     display: flex;
     align-items: center;
