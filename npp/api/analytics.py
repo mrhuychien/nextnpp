@@ -11,28 +11,49 @@ from ._utils import require_customer
 
 @frappe.whitelist()
 def sales_by_month(months: int = 12) -> list[dict]:
+    """Doanh số + sản lượng (thùng) theo từng tháng, N tháng gần nhất."""
     customer = require_customer()
     months = max(1, min(int(months or 12), 36))
-    rows = []
     today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+
+    rev = frappe.db.sql(
+        """
+        SELECT DATE_FORMAT(posting_date, '%%m/%%Y') AS m,
+               COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
+        FROM `tabSales Invoice`
+        WHERE customer=%s AND docstatus=1 AND posting_date >= %s
+        GROUP BY DATE_FORMAT(posting_date, '%%m/%%Y')
+        """,
+        (customer, start),
+        as_dict=True,
+    )
+    qty = frappe.db.sql(
+        """
+        SELECT DATE_FORMAT(si.posting_date, '%%m/%%Y') AS m,
+               COALESCE(SUM(sii.qty), 0) AS qty
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON sii.parent = si.name
+        WHERE si.customer=%s AND si.docstatus=1 AND si.posting_date >= %s
+          AND sii.uom IN ('Thùng', 'Box')
+        GROUP BY DATE_FORMAT(si.posting_date, '%%m/%%Y')
+        """,
+        (customer, start),
+        as_dict=True,
+    )
+    rev_map = {r["m"]: r for r in rev}
+    qty_map = {r["m"]: float(r["qty"] or 0) for r in qty}
+
+    rows = []
     for offset in range(months - 1, -1, -1):
-        anchor = add_months(today, -offset)
-        start = get_first_day(anchor)
-        end = get_last_day(anchor)
-        agg = frappe.db.sql(
-            """
-            SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
-            FROM `tabSales Invoice`
-            WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
-            """,
-            (customer, start, end),
-            as_dict=True,
-        )[0]
+        key = getdate(add_months(today, -offset)).strftime("%m/%Y")
+        r = rev_map.get(key)
         rows.append(
             {
-                "month": start.strftime("%m/%Y"),
-                "count": agg["cnt"],
-                "revenue": float(agg["revenue"] or 0),
+                "month": key,
+                "count": int(r["cnt"]) if r else 0,
+                "revenue": float(r["revenue"]) if r else 0.0,
+                "qty": qty_map.get(key, 0.0),
             }
         )
     return rows
@@ -102,3 +123,60 @@ def sales_by_item_group(months: int = 12) -> list[dict]:
         as_dict=True,
     )
     return [dict(r, qty=float(r["qty"]), amount=float(r["amount"])) for r in rows]
+
+
+@frappe.whitelist()
+def kpi(months: int = 12) -> dict:
+    """Số liệu tổng quan kỳ N tháng + tăng trưởng doanh số so với kỳ trước.
+
+    Tất cả lọc theo require_customer() → chỉ dữ liệu của NPP đang đăng nhập.
+    """
+    customer = require_customer()
+    months = max(1, min(int(months or 12), 36))
+    today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+    end = get_last_day(today)
+    prev_start = get_first_day(add_months(today, -(2 * months - 1)))
+    prev_end = get_last_day(add_months(today, -months))
+
+    cur = frappe.db.sql(
+        """
+        SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total), 0) AS revenue
+        FROM `tabSales Invoice`
+        WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
+        """,
+        (customer, start, end),
+        as_dict=True,
+    )[0]
+    prev_rev = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(grand_total), 0)
+        FROM `tabSales Invoice`
+        WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s
+        """,
+        (customer, prev_start, prev_end),
+    )[0][0] or 0
+    qty = frappe.db.sql(
+        """
+        SELECT COALESCE(SUM(sii.qty), 0)
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON sii.parent = si.name
+        WHERE si.customer=%s AND si.docstatus=1
+          AND si.posting_date BETWEEN %s AND %s
+          AND sii.uom IN ('Thùng', 'Box')
+        """,
+        (customer, start, end),
+    )[0][0] or 0
+
+    revenue = float(cur["revenue"] or 0)
+    count = int(cur["cnt"] or 0)
+    prev_rev = float(prev_rev)
+    return {
+        "months": months,
+        "revenue": revenue,
+        "qty": float(qty),
+        "order_count": count,
+        "avg_order_value": (revenue / count) if count else 0.0,
+        "prev_revenue": prev_rev,
+        "growth_pct": ((revenue - prev_rev) / prev_rev * 100) if prev_rev else None,
+    }
