@@ -4,7 +4,7 @@ import * as api from '../lib/api.js';
 import { showToast } from '../components/toast.js';
 import { showLoading, hideLoading } from '../components/loading.js';
 import { showModal, closeModal } from '../components/modal.js';
-import { COMPANY, PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName } from './_config.js';
+import { PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName } from './_config.js';
 
 const QTY = {};   // item_code → qty
 let activeTab = 'traditional';
@@ -220,63 +220,27 @@ function openOrderReview() {
 }
 
 async function submitOrder(rows) {
-    showLoading('Đang áp khuyến mãi & tạo đơn...');
-    const today = new Date().toISOString().slice(0, 10);
+    showLoading('Đang tạo đơn...');
     try {
-        // Apply pricing rule per item
-        const detailsPromises = rows.map((r) => api.getItemDetails({
-            item_code: r.code,
-            company: COMPANY,
-            customer: window.NPP_CONTEXT.customer,
-            price_list: PRICE_LIST,
-            qty: r.qty,
-            uom: 'Thùng',
-            doctype: 'Sales Invoice',
-            conversion_rate: 1,
-            selling_price_list: PRICE_LIST,
-            currency: 'VND',
-            plc_conversion_rate: 1,
-            ignore_pricing_rule: 0,
-            posting_date: today,
-            transaction_date: today,
-        }).then((m) => ({
-            item_code: r.code,
-            qty: r.qty,
-            uom: 'Thùng',
-            rate: m?.price_list_rate || m?.rate || (r.rate),
-        })).catch(() => ({ item_code: r.code, qty: r.qty, uom: 'Thùng', rate: r.rate })));
-
-        const items = await Promise.all(detailsPromises);
-
-        // Read NPP note (if any)
         const noteEl = document.getElementById('npp-dh-note');
-        const noteText = noteEl ? noteEl.value.trim() : '';
-
-        const inv = await api.insert({
-            doctype: 'Sales Invoice',
-            company: COMPANY,
-            customer: window.NPP_CONTEXT.customer,
-            selling_price_list: PRICE_LIST,
-            posting_date: today,
-            due_date: today,
-            currency: 'VND',
-            ignore_pricing_rule: 0,
-            items,
-            docstatus: 0,
-            // ─── Custom fields ──────────────────────────────────────
-            // Object key có dấu phải dùng dạng string với nháy
-            'custom_ghi_chú_npp': noteText || undefined,
-            'custom_trạng_thái_vận_chuyển': 'Chờ xử lý',
+        const note = noteEl ? noteEl.value.trim() : '';
+        // Gửi số THÙNG cho server; server tự quy đổi qty = thùng × quy cách và
+        // tự áp giá theo bảng giá (gồm khuyến mãi). Không tạo Sales Invoice ở
+        // client để tránh phụ thuộc UOM 'Thùng' và quyền tạo SI từ portal.
+        const payload = rows.map((r) => ({ item_code: r.code, cases: r.qty }));
+        const inv = await api.call('npp.api.orders.create_order', {
+            items: JSON.stringify(payload),
+            note,
         });
 
-        hideLoading(); closeModal();
+        closeModal();
         showToast(`Đã tạo đơn ${inv.name}`, 'success');
-        // Clear cart
-        Object.keys(QTY).forEach((k) => delete QTY[k]);
-        // Navigate to detail
+        Object.keys(QTY).forEach((k) => delete QTY[k]);   // clear cart
         location.hash = `#/don-hang/${encodeURIComponent(inv.name)}`;
     } catch (err) {
+        showToast('Lỗi: ' + (err.message || 'Không tạo được đơn'), 'error');
+    } finally {
+        // LUÔN tắt spinner — hết "quay tròn" kể cả khi lỗi/timeout.
         hideLoading();
-        showToast('Lỗi: ' + err.message, 'error');
     }
 }
