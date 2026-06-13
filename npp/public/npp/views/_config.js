@@ -64,8 +64,8 @@ export const SI_FIELDS = {
 // Lưu ý: Item KHÔNG có total_weight/total_net_weight. Field cân nặng của Item
 // là 'weight_per_unit' (kg/đơn vị) — thêm vào đây nếu cần dùng trong catalog.
 export const ITEM_FIELDS = {
-    quycach:    'custom_quy_cách',     // Custom — fixture
-    the_tich:   'custom_thể_tích',     // Custom — fixture
+    quycach:    'custom_quycach',      // Item master field (ERP quản lý) — số hộp/thùng
+    the_tich:   'custom_thể_tích',     // ⚠️ cần xác nhận tên field THẬT trong ERP
     item_group: 'item_group',          // Standard ERPNext
 };
 

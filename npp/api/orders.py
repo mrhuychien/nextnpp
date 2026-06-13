@@ -2,7 +2,7 @@
 """Order (Sales Invoice) creation for the NPP portal.
 
 Tạo đơn ở server thay vì để client gọi get_item_details + frappe.client.insert:
-- Quy đổi thùng → hộp bằng Item.custom_quy_cách (1 nguồn sự thật, server-side).
+- Quy đổi thùng → hộp bằng Item.custom_quycach (1 nguồn sự thật, server-side).
 - KHÔNG phụ thuộc UOM 'Thùng' khai trên từng Item (qty nộp theo stock UOM = hộp).
 - Giá để ERPNext tự áp theo selling_price_list (gồm pricing rule/khuyến mãi).
 - Báo lỗi rõ ràng (customer chưa gán, item không tồn tại...) thay vì để client
@@ -63,8 +63,9 @@ def create_order(items, note: str | None = None) -> dict:
             continue
         if not frappe.db.exists("Item", code):
             frappe.throw(_("Sản phẩm không tồn tại: {0}").format(code))
-        # quy_cách = số hộp/thùng; chưa nhập → coi như 1 (đặt theo hộp).
-        quycach = cint(frappe.db.get_value("Item", code, "custom_quy_cách")) or 1
+        # quy cách = số hộp/thùng; đọc từ field custom_quycach trên Item.
+        # Chưa nhập → coi như 1 (đặt theo hộp).
+        quycach = cint(frappe.db.get_value("Item", code, "custom_quycach")) or 1
         si.append(
             "items",
             {
