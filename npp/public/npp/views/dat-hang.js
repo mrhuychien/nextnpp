@@ -4,7 +4,14 @@ import * as api from '../lib/api.js';
 import { showToast } from '../components/toast.js';
 import { showLoading, hideLoading } from '../components/loading.js';
 import { showModal, closeModal } from '../components/modal.js';
-import { PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName } from './_config.js';
+// _config.js nạp ĐỘNG kèm ?v= để bust cache 'immutable' của /assets — đổi tên
+// field/config có hiệu lực chỉ với F5, không cần hard-refresh.
+let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName;
+async function loadConfig() {
+    const v = encodeURIComponent(window.NPP_CONTEXT?.assetVersion || '');
+    const cfg = await import(v ? `./_config.js?v=${v}` : './_config.js');
+    ({ PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, cleanItemName } = cfg);
+}
 
 const QTY = {};   // item_code → qty
 let activeTab = 'traditional';
@@ -13,6 +20,7 @@ let pricesCache = {}; // item_code → rate
 let containerEl = null;
 
 export async function render({ container }) {
+    await loadConfig();   // nạp _config.js (versioned) trước khi dùng
     containerEl = container;
     container.innerHTML = html`
         <div class="npp-dh-tabs">
