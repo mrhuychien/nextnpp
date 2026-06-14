@@ -509,6 +509,16 @@
 }
 .npp-cn-clickable:hover { text-decoration-style: solid; }
 
+/* ─── Quản lý kênh (dashboard) ─── */
+.npp-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+@media (max-width: 767px) { .npp-grid-2 { grid-template-columns: 1fr; } }
+.npp-ql-filters { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.npp-ql-filters select {
+    padding: 8px 10px; border-radius: 10px; border: 1px solid var(--npp-border);
+    background: var(--npp-surface); color: var(--npp-text); font-weight: 600; font-size: 0.85rem;
+}
+.npp-ql-filters .npp-dh-search { flex: 1; min-width: 160px; }
+
 .npp-cta-block {
     display: flex;
     align-items: center;
