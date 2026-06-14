@@ -1,5 +1,5 @@
 import { html } from '../lib/dom.js';
-import { formatCurrency, formatNumber, formatDate, escapeHtml } from '../lib/format.js';
+import { formatCurrency, formatNumber, formatVNDShort, formatDate, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 import { showModal } from '../components/modal.js';
@@ -41,6 +41,7 @@ export async function render({ container }) {
     container.innerHTML = html`
         ${banner({ title: 'Quản lý kênh', subtitle: 'Phân tích doanh số & sức khỏe NPP toàn kênh' })}
         ${navBar('ov')}
+        <div id="npp-ql-risk"></div>
         <div class="npp-flex npp-justify-between npp-items-center">
             <h3 class="npp-font-bold">Tổng quan</h3>
             <select id="npp-ql-period" style="padding:8px 12px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);">
@@ -88,6 +89,7 @@ async function loadData(months) {
         const data = await api.call('npp.api.manager.overview', { months });
         _rows = data.customers || [];
         renderKpis(data);
+        renderRisk(data.risk || {});
         fillTerritoryFilter(_rows);
         charts.forEach((c) => c.destroy());
         charts = [];
@@ -106,24 +108,38 @@ function pct(v) {
     return `<span style="color:${up ? 'var(--npp-success)' : 'var(--npp-danger)'};font-weight:800;">${up ? '▲' : '▼'} ${Math.abs(v).toFixed(1)}%</span>`;
 }
 
+function renderRisk(r) {
+    const root = document.getElementById('npp-ql-risk');
+    if (!root) return;
+    if (!(r.overdue > 0)) { root.innerHTML = ''; return; }
+    root.innerHTML = html`
+        <div class="npp-risk-bar">
+            <span>🚨 <strong>Cảnh báo dòng tiền</strong></span>
+            <span>Nợ quá hạn: <strong>${formatVNDShort(r.overdue || 0)}</strong></span>
+            <span>Quá 90 ngày: <strong>${formatVNDShort(r.over_90 || 0)}</strong></span>
+            <span>DSO: <strong>~${Math.round(r.dso || 0)} ngày</strong></span>
+        </div>`;
+}
+
 function renderKpis(d) {
     const t = d.totals || {};
     const g = d.growth || {};
+    const label = d.months === 1 ? 'tháng này, đến nay' : `${d.months} tháng, đến nay`;
     document.getElementById('npp-ql-kpis').innerHTML = html`
         <div class="npp-kpi-card">
-            <div class="npp-kpi-label">Doanh số (${d.months} tháng)</div>
-            <div class="npp-kpi-value">${formatCurrency(t.revenue || 0)}</div>
-            <div class="npp-kpi-sub">${pct(g.growth_pct)} kỳ trước · ${pct(g.yoy_pct)} YoY</div>
+            <div class="npp-kpi-label">Doanh số (${label})</div>
+            <div class="npp-kpi-value">${formatVNDShort(t.revenue || 0)}</div>
+            <div class="npp-kpi-sub">${pct(g.growth_pct)} vs kỳ trước · ${pct(g.yoy_pct)} vs năm trước <span class="npp-text-muted">(cùng số ngày)</span></div>
         </div>
         <div class="npp-kpi-card">
-            <div class="npp-kpi-label">Dự báo tháng (run-rate)</div>
-            <div class="npp-kpi-value">${formatCurrency(t.run_rate || 0)}</div>
-            <div class="npp-kpi-sub">Ước tính cuối tháng này</div>
+            <div class="npp-kpi-label">Run-rate tháng này</div>
+            <div class="npp-kpi-value">${formatVNDShort(t.run_rate || 0)}</div>
+            <div class="npp-kpi-sub">Ước tính cả tháng theo nhịp hiện tại</div>
         </div>
         <div class="npp-kpi-card">
             <div class="npp-kpi-label">Sản lượng</div>
             <div class="npp-kpi-value">${formatNumber(t.qty || 0)} <span style="font-size:.8rem;font-weight:600;">thùng</span></div>
-            <div class="npp-kpi-sub">${formatNumber(t.orders || 0)} đơn · TB/đơn ${formatCurrency(t.aov || 0)}</div>
+            <div class="npp-kpi-sub">${formatNumber(t.orders || 0)} đơn · TB/đơn ${formatVNDShort(t.aov || 0)}</div>
         </div>
         <div class="npp-kpi-card">
             <div class="npp-kpi-label">NPP hoạt động</div>
@@ -132,13 +148,13 @@ function renderKpis(d) {
         </div>
         <div class="npp-kpi-card">
             <div class="npp-kpi-label">Tổng công nợ</div>
-            <div class="npp-kpi-value danger">${formatCurrency(t.debt || 0)}</div>
+            <div class="npp-kpi-value danger">${formatVNDShort(t.debt || 0)}</div>
             <div class="npp-kpi-sub">DSO ~${Math.round(t.dso || 0)} ngày</div>
         </div>
         <div class="npp-kpi-card">
             <div class="npp-kpi-label">Cần thanh toán</div>
-            <div class="npp-kpi-value warning">${formatCurrency(t.required_payment || 0)}</div>
-            <div class="npp-kpi-sub">Theo chính sách ${d.policy === 'tet' ? 'Tết' : 'thường'}</div>
+            <div class="npp-kpi-value warning">${formatVNDShort(t.required_payment || 0)}</div>
+            <div class="npp-kpi-sub">Chính sách ${d.policy === 'tet' ? 'Tết' : 'thường'}</div>
         </div>
     `;
 }
@@ -149,8 +165,9 @@ function renderCharts(Chart, d) {
         data: {
             labels: m.map((x) => x.month),
             datasets: [
-                { type: 'bar',  label: 'Số thùng', data: m.map((x) => x.qty),     backgroundColor: 'rgba(16,185,129,0.45)', yAxisID: 'y1', order: 2 },
+                { type: 'bar',  label: 'Số thùng', data: m.map((x) => x.qty),     backgroundColor: 'rgba(16,185,129,0.45)', yAxisID: 'y1', order: 3 },
                 { type: 'line', label: 'Doanh số', data: m.map((x) => x.revenue), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.12)', tension: 0.3, fill: true, yAxisID: 'y', order: 1 },
+                { type: 'line', label: 'Cùng kỳ năm trước', data: m.map((x) => x.revenue_ly || 0), borderColor: '#94a3b8', borderDash: [5, 5], tension: 0.3, fill: false, yAxisID: 'y', order: 2 },
             ],
         },
         options: {
@@ -167,12 +184,18 @@ function renderCharts(Chart, d) {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${formatCurrency(c.parsed)}` } } } },
     }));
 
-    const terr = d.by_territory || [];
-    charts.push(new Chart(document.getElementById('npp-ql-terr'), {
-        type: 'bar',
-        data: { labels: terr.map((x) => x.territory), datasets: [{ label: 'Doanh số', data: terr.map((x) => x.revenue), backgroundColor: '#8b5cf6' }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => formatCurrency(c.parsed.y) } } }, scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } } },
-    }));
+    const terrCanvas = document.getElementById('npp-ql-terr');
+    if (d.territory_clean) {
+        const terr = (d.by_territory || []).slice(0, 12);
+        charts.push(new Chart(terrCanvas, {
+            type: 'bar',
+            data: { labels: terr.map((x) => x.territory), datasets: [{ label: 'Doanh số', data: terr.map((x) => x.revenue), backgroundColor: '#8b5cf6' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => formatCurrency(c.parsed.y) } } }, scales: { y: { ticks: { callback: (v) => formatVNDShort(v) } } } },
+        }));
+    } else {
+        const w = terrCanvas && terrCanvas.closest('.npp-chart-wrap');
+        if (w) w.innerHTML = '<div class="npp-text-muted npp-text-center" style="padding:2rem;">Dữ liệu tỉnh chưa đủ sạch (cần ≥90% NPP có tỉnh). Cập nhật territory hoặc tên NPP để bật biểu đồ.</div>';
+    }
 
     const top = [...(d.customers || [])].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
     charts.push(new Chart(document.getElementById('npp-ql-top'), {

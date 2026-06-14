@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Manager (sales-channel) analytics — toàn bộ NPP.
 
-Chỉ dành cho role quản lý (_utils.MANAGER_ROLES); mọi method gọi _guard().
-Doanh số loại HĐ opening; công nợ giữ opening (nợ thật). Tính grouped (không N+1).
+Chỉ role quản lý (_utils.MANAGER_ROLES); mọi method gọi _guard().
+Doanh số loại HĐ opening; công nợ giữ opening. Tính grouped (không N+1).
+So sánh kỳ LUÔN period-aligned (cùng số ngày) — không so partial-vs-full.
 """
 
 from __future__ import annotations
@@ -21,11 +22,27 @@ from frappe.utils import (
 
 from ._utils import is_manager
 
-# Cấu hình — đổi tại đây nếu hệ thống khác.
+# Cấu hình
 NPP_GROUP = "NPP"
-RANK_A = 200_000_000   # doanh số BQ tháng ≥ 200tr → hạng A
-RANK_B = 100_000_000   # ≥ 100tr → B, còn lại → C
-DORMANT_DAYS = 14      # không mua > 14 ngày → "Ngủ đông"
+RANK_A = 200_000_000
+RANK_B = 100_000_000
+DORMANT_DAYS = 14
+
+# 63 tỉnh/thành (dùng để chuẩn hoá cột Tỉnh từ territory/tên NPP) — dài hơn ưu tiên match trước.
+PROVINCES = sorted([
+    "An Giang", "Bà Rịa - Vũng Tàu", "Bạc Liêu", "Bắc Giang", "Bắc Kạn", "Bắc Ninh",
+    "Bến Tre", "Bình Dương", "Bình Định", "Bình Phước", "Bình Thuận", "Cà Mau",
+    "Cao Bằng", "Cần Thơ", "Đà Nẵng", "Đắk Lắk", "Đắk Nông", "Điện Biên", "Đồng Nai",
+    "Đồng Tháp", "Gia Lai", "Hà Giang", "Hà Nam", "Hà Nội", "Hà Tĩnh", "Hải Dương",
+    "Hải Phòng", "Hậu Giang", "Hoà Bình", "Hòa Bình", "Hưng Yên", "Khánh Hòa",
+    "Kiên Giang", "Kon Tum", "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai", "Long An",
+    "Nam Định", "Nghệ An", "Ninh Bình", "Ninh Thuận", "Phú Thọ", "Phú Yên", "Quảng Bình",
+    "Quảng Nam", "Quảng Ngãi", "Quảng Ninh", "Quảng Trị", "Sóc Trăng", "Sơn La",
+    "Tây Ninh", "Thái Bình", "Thái Nguyên", "Thanh Hóa", "Thừa Thiên Huế", "Tiền Giang",
+    "TP HCM", "Hồ Chí Minh", "Trà Vinh", "Tuyên Quang", "Vĩnh Long", "Vĩnh Phúc", "Yên Bái",
+], key=len, reverse=True)
+
+_GENERIC_TERR = {"", "vietnam", "việt nam", "viet nam", "all territories", "rest of the world"}
 
 
 def _guard() -> None:
@@ -39,208 +56,179 @@ def _sum_by_customer(query: str, params: tuple) -> dict:
     return {r["k"]: flt(r["v"]) for r in frappe.db.sql(query, params, as_dict=True)}
 
 
+def _npp_names() -> tuple:
+    return tuple(c["name"] for c in frappe.get_all(
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0}, fields=["name"]))
+
+
+def _resolve_province(territory: str | None, name: str | None) -> str:
+    """Chuẩn hoá về tỉnh thật: ưu tiên territory (nếu không phải 'Vietnam'), else dò trong tên NPP."""
+    t = (territory or "").strip()
+    if t and t.lower() not in _GENERIC_TERR:
+        for p in PROVINCES:
+            if p.lower() in t.lower():
+                return _canon(p)
+        return t
+    nm = name or ""
+    for p in PROVINCES:
+        if p.lower() in nm.lower():
+            return _canon(p)
+    return "Khác"
+
+
+def _canon(p: str) -> str:
+    if p in ("Hồ Chí Minh",):
+        return "TP HCM"
+    if p == "Hoà Bình":
+        return "Hòa Bình"
+    return p
+
+
 @frappe.whitelist()
 def overview(months: int = 3) -> dict:
-    """Dashboard điều hành toàn kênh + bảng phân tích từng NPP."""
+    """Dashboard điều hành toàn kênh + bảng phân tích từng NPP (so-kỳ period-aligned)."""
     _guard()
     months = max(1, min(int(months or 3), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
-    end = get_last_day(today)
+    end = today  # P0-1: kỳ hiện tại tính ĐẾN HÔM NAY (partial), không lấy cả tháng
+
+    customers = frappe.get_all(
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0},
+        fields=["name", "customer_name", "territory"], order_by="customer_name asc")
+    if not customers:
+        return {"months": months, "policy": "normal", "customers": [], "totals": {},
+                "growth": {}, "monthly": [], "by_group": [], "by_territory": [],
+                "territory_clean": False, "risk": {}}
+    names = tuple(c["name"] for c in customers)
     month = today.month
     is_tet = month >= 11 or month <= 2
 
-    customers = frappe.get_all(
-        "Customer",
-        filters={"customer_group": NPP_GROUP, "disabled": 0},
-        fields=["name", "customer_name", "territory"],
-        order_by="customer_name asc",
-    )
-    if not customers:
-        return {"months": months, "policy": "tet" if is_tet else "normal",
-                "customers": [], "totals": {}, "growth": {}, "monthly": [],
-                "by_group": [], "by_territory": []}
-
-    names = tuple(c["name"] for c in customers)
-
-    # ── Per-customer maps (chỉ trong nhóm NPP) ──────────────────────────
-    rev_rows = frappe.db.sql(
-        """
-        SELECT customer AS k, COALESCE(SUM(grand_total),0) AS revenue, COUNT(*) AS orders
-        FROM `tabSales Invoice`
-        WHERE docstatus=1 AND customer IN %s
-          AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes'
-        GROUP BY customer
-        """,
-        (names, start, end), as_dict=True,
-    )
-    rev_map = {r["k"]: flt(r["revenue"]) for r in rev_rows}
-    ord_map = {r["k"]: int(r["orders"]) for r in rev_rows}
-
-    qty_map = _sum_by_customer(
-        """
-        SELECT si.customer AS k, COALESCE(SUM(sii.qty),0) AS v
-        FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
-        WHERE si.docstatus=1 AND si.customer IN %s
-          AND si.posting_date BETWEEN %s AND %s
-          AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-        GROUP BY si.customer
-        """,
-        (names, start, end),
-    )
-    debt_map = _sum_by_customer(
-        """
-        SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v
-        FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0
-        GROUP BY customer
-        """,
-        (names,),
-    )
-    fl_rows = frappe.db.sql(
-        "SELECT customer AS k, MAX(posting_date) AS last, MIN(posting_date) AS first "
-        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer",
-        (names,), as_dict=True,
-    )
-    last_map = {r["k"]: r["last"] for r in fl_rows}
-    first_map = {r["k"]: r["first"] for r in fl_rows}
-
-    # ── Cần thanh toán theo chính sách (grouped) ────────────────────────
-    if is_tet:
-        tet_year = today.year if month >= 11 else today.year - 1
-        tet_map = _sum_by_customer(
-            """
-            SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v
-            FROM `tabSales Invoice`
-            WHERE docstatus=1 AND customer IN %s AND posting_date >= %s
-              AND IFNULL(is_opening,'No')!='Yes'
-            GROUP BY customer
-            """,
-            (names, f"{tet_year}-11-01"),
-        )
-
-        def req_of(n: str) -> float:
-            return max(0.0, debt_map.get(n, 0.0) - tet_map.get(n, 0.0) * 0.5)
-    else:
-        overdue_map = _sum_by_customer(
-            """
-            SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v
-            FROM `tabSales Invoice`
-            WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND posting_date <= %s
-            GROUP BY customer
-            """,
-            (names, add_days(today, -30)),
-        )
-
-        def req_of(n: str) -> float:
-            return overdue_map.get(n, 0.0)
-
-    # ── Lắp bảng NPP + tổng hợp ─────────────────────────────────────────
-    rows = []
-    t_rev = t_qty = t_debt = t_req = 0.0
-    n_active = n_dormant = n_new = n_buying = 0
-    terr: dict = {}
-    for c in customers:
-        name = c["name"]
-        rev = rev_map.get(name, 0.0)
-        qty = qty_map.get(name, 0.0)
-        debt = debt_map.get(name, 0.0)
-        req = req_of(name)
-        orders = ord_map.get(name, 0)
-        last = last_map.get(name)
-        first = first_map.get(name)
-
-        if last is None:
-            status = "Chưa mua"
-        elif date_diff(today, last) <= DORMANT_DAYS:
-            status = "Hoạt động"
-            n_active += 1
-        else:
-            status = "Ngủ đông"
-            n_dormant += 1
-        is_new = bool(first and getdate(first) >= start)
-        if is_new:
-            n_new += 1
-        if rev > 0:
-            n_buying += 1
-
-        avg_month = rev / months
-        rank = "A" if avg_month >= RANK_A else ("B" if avg_month >= RANK_B else "C")
-
-        t_rev += rev
-        t_qty += qty
-        t_debt += debt
-        t_req += req
-        tv = terr.setdefault(c.get("territory") or "—", {"territory": c.get("territory") or "—", "revenue": 0.0, "debt": 0.0, "count": 0})
-        tv["revenue"] += rev
-        tv["debt"] += debt
-        tv["count"] += 1
-
-        rows.append({
-            "customer": name,
-            "customer_name": c["customer_name"],
-            "territory": c.get("territory") or "",
-            "revenue": rev,
-            "qty": qty,
-            "debt": debt,
-            "required_payment": req,
-            "orders": orders,
-            "aov": (rev / orders) if orders else 0.0,
-            "last_order": str(last) if last else None,
-            "status": status,
-            "rank": rank,
-            "is_new": is_new,
-        })
-
-    # ── Tăng trưởng kỳ trước (MoM tương đối) + cùng kỳ năm trước (YoY) ──
     def npp_rev(s, e) -> float:
         return flt(frappe.db.sql(
             """SELECT COALESCE(SUM(grand_total),0) FROM `tabSales Invoice`
                WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
-                 AND IFNULL(is_opening,'No')!='Yes'""",
-            (names, s, e))[0][0] or 0)
+                 AND IFNULL(is_opening,'No')!='Yes'""", (names, s, e))[0][0] or 0)
 
-    prev_rev = npp_rev(get_first_day(add_months(today, -(2 * months - 1))), get_last_day(add_months(today, -months)))
-    ly_rev = npp_rev(get_first_day(add_months(today, -(months - 1) - 12)), get_last_day(add_months(today, -12)))
+    # ── Per-customer (kỳ [start, today]) ────────────────────────────────
+    rev_rows = frappe.db.sql(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS revenue, COUNT(*) AS orders
+           FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""",
+        (names, start, end), as_dict=True)
+    rev_map = {r["k"]: flt(r["revenue"]) for r in rev_rows}
+    ord_map = {r["k"]: int(r["orders"]) for r in rev_rows}
+    qty_map = _sum_by_customer(
+        """SELECT si.customer AS k, COALESCE(SUM(sii.qty),0) AS v
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY si.customer""",
+        (names, start, end))
+    debt_map = _sum_by_customer(
+        """SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer""", (names,))
+    fl_rows = frappe.db.sql(
+        "SELECT customer AS k, MAX(posting_date) AS last, MIN(posting_date) AS first "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)
+    last_map = {r["k"]: r["last"] for r in fl_rows}
+    first_map = {r["k"]: r["first"] for r in fl_rows}
+
+    if is_tet:
+        tet_year = today.year if month >= 11 else today.year - 1
+        tet_map = _sum_by_customer(
+            """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+               WHERE docstatus=1 AND customer IN %s AND posting_date >= %s AND IFNULL(is_opening,'No')!='Yes'
+               GROUP BY customer""", (names, f"{tet_year}-11-01"))
+        req_of = lambda n: max(0.0, debt_map.get(n, 0.0) - tet_map.get(n, 0.0) * 0.5)
+    else:
+        overdue_map = _sum_by_customer(
+            """SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice`
+               WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND posting_date <= %s
+               GROUP BY customer""", (names, add_days(today, -30)))
+        req_of = lambda n: overdue_map.get(n, 0.0)
+
+    rows = []
+    t_rev = t_qty = t_debt = t_req = 0.0
+    n_active = n_dormant = n_new = 0
+    terr: dict = {}
+    resolved_ok = 0
+    for c in customers:
+        name = c["name"]
+        rev = rev_map.get(name, 0.0); qty = qty_map.get(name, 0.0)
+        debt = debt_map.get(name, 0.0); req = req_of(name)
+        orders = ord_map.get(name, 0); last = last_map.get(name); first = first_map.get(name)
+        if last is None:
+            status = "Chưa mua"
+        elif date_diff(today, last) <= DORMANT_DAYS:
+            status = "Hoạt động"; n_active += 1
+        else:
+            status = "Ngủ đông"; n_dormant += 1
+        is_new = bool(first and getdate(first) >= start)
+        if is_new:
+            n_new += 1
+        avg_month = rev / months
+        rank = "A" if avg_month >= RANK_A else ("B" if avg_month >= RANK_B else "C")
+        province = _resolve_province(c.get("territory"), c["customer_name"])
+        if province != "Khác":
+            resolved_ok += 1
+        t_rev += rev; t_qty += qty; t_debt += debt; t_req += req
+        tv = terr.setdefault(province, {"territory": province, "revenue": 0.0, "debt": 0.0, "count": 0})
+        tv["revenue"] += rev; tv["debt"] += debt; tv["count"] += 1
+        rows.append({
+            "customer": name, "customer_name": c["customer_name"], "territory": province,
+            "revenue": rev, "qty": qty, "debt": debt, "required_payment": req,
+            "orders": orders, "aov": (rev / orders) if orders else 0.0,
+            "last_order": str(last) if last else None, "status": status, "rank": rank, "is_new": is_new})
+
+    # ── So-kỳ PERIOD-ALIGNED (dời nguyên cửa sổ [start, today]) ─────────
+    prev_rev = npp_rev(add_months(start, -months), add_months(today, -months))
+    ly_rev = npp_rev(add_months(start, -12), add_months(today, -12))
 
     # ── Run-rate tháng hiện tại ─────────────────────────────────────────
     mtd = npp_rev(get_first_day(today), today)
     dim = get_last_day(today).day
     run_rate = (mtd / today.day * dim) if today.day else mtd
 
-    # ── Xu hướng theo tháng (DS + sản lượng) ────────────────────────────
+    # ── Xu hướng 12 tháng (độc lập kỳ) + overlay cùng kỳ năm trước ──────
+    m24_start = get_first_day(add_months(today, -23))
     m_rev = {r["m"]: flt(r["v"]) for r in frappe.db.sql(
         """SELECT DATE_FORMAT(posting_date,'%%m/%%Y') AS m, COALESCE(SUM(grand_total),0) AS v
-           FROM `tabSales Invoice`
-           WHERE docstatus=1 AND customer IN %s AND posting_date >= %s AND IFNULL(is_opening,'No')!='Yes'
-           GROUP BY m""", (names, start), as_dict=True)}
+           FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s AND posting_date >= %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY m""", (names, m24_start), as_dict=True)}
     m_qty = {r["m"]: flt(r["v"]) for r in frappe.db.sql(
         """SELECT DATE_FORMAT(si.posting_date,'%%m/%%Y') AS m, COALESCE(SUM(sii.qty),0) AS v
            FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date >= %s
-             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-           GROUP BY m""", (names, start), as_dict=True)}
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY m""",
+        (names, get_first_day(add_months(today, -11))), as_dict=True)}
     monthly = []
-    for offset in range(months - 1, -1, -1):
+    for offset in range(11, -1, -1):
         key = getdate(add_months(today, -offset)).strftime("%m/%Y")
-        monthly.append({"month": key, "revenue": m_rev.get(key, 0.0), "qty": m_qty.get(key, 0.0)})
+        key_ly = getdate(add_months(today, -offset - 12)).strftime("%m/%Y")
+        monthly.append({"month": key, "revenue": m_rev.get(key, 0.0), "qty": m_qty.get(key, 0.0),
+                        "revenue_ly": m_rev.get(key_ly, 0.0)})
 
-    # ── Cơ cấu nhóm hàng ────────────────────────────────────────────────
     by_group = [
         {"item_group": r["item_group"], "revenue": flt(r["revenue"]), "qty": flt(r["qty"])}
         for r in frappe.db.sql(
             """SELECT i.item_group, COALESCE(SUM(sii.amount),0) AS revenue, COALESCE(SUM(sii.qty),0) AS qty
-               FROM `tabSales Invoice Item` sii
-               JOIN `tabSales Invoice` si ON sii.parent=si.name
+               FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
                JOIN `tabItem` i ON sii.item_code=i.item_code
-               WHERE si.docstatus=1 AND si.customer IN %s
-                 AND si.posting_date BETWEEN %s AND %s
+               WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
                  AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-               GROUP BY i.item_group ORDER BY revenue DESC""",
-            (names, start, end), as_dict=True)
-    ]
+               GROUP BY i.item_group ORDER BY revenue DESC""", (names, start, end), as_dict=True)]
 
-    by_territory = sorted(terr.values(), key=lambda x: x["revenue"], reverse=True)
-    dso = (t_debt / t_rev * months * 30) if t_rev else 0.0
+    # ── Dải rủi ro nợ (P0-7) ────────────────────────────────────────────
+    overdue_total = flt(frappe.db.sql(
+        """SELECT COALESCE(SUM(outstanding_amount),0) FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0
+             AND COALESCE(due_date, posting_date) < %s""", (names, today))[0][0] or 0)
+    over_90 = flt(frappe.db.sql(
+        """SELECT COALESCE(SUM(outstanding_amount),0) FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0
+             AND COALESCE(due_date, posting_date) < %s""", (names, add_days(today, -90)))[0][0] or 0)
+    dso = (t_debt / t_rev * date_diff(end, start) ) if t_rev and date_diff(end, start) else 0.0
 
     return {
         "months": months,
@@ -248,21 +236,14 @@ def overview(months: int = 3) -> dict:
         "customers": rows,
         "monthly": monthly,
         "by_group": by_group,
-        "by_territory": by_territory,
+        "by_territory": sorted(terr.values(), key=lambda x: x["revenue"], reverse=True),
+        "territory_clean": (resolved_ok / len(rows) >= 0.9) if rows else False,
         "totals": {
-            "revenue": t_rev,
-            "qty": t_qty,
-            "debt": t_debt,
-            "required_payment": t_req,
-            "npp_count": len(rows),
-            "active": n_active,
-            "dormant": n_dormant,
-            "new": n_new,
-            "buying": n_buying,
+            "revenue": t_rev, "qty": t_qty, "debt": t_debt, "required_payment": t_req,
+            "npp_count": len(rows), "active": n_active, "dormant": n_dormant, "new": n_new,
             "orders": sum(ord_map.values()),
             "aov": (t_rev / sum(ord_map.values())) if sum(ord_map.values()) else 0.0,
-            "run_rate": run_rate,
-            "dso": dso,
+            "run_rate": run_rate, "dso": dso,
         },
         "growth": {
             "prev_revenue": prev_rev,
@@ -270,15 +251,8 @@ def overview(months: int = 3) -> dict:
             "ly_revenue": ly_rev,
             "yoy_pct": ((t_rev - ly_rev) / ly_rev * 100) if ly_rev else None,
         },
+        "risk": {"overdue": overdue_total, "over_90": over_90, "dso": dso},
     }
-
-
-def _npp_names() -> tuple:
-    return tuple(
-        c["name"] for c in frappe.get_all(
-            "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0}, fields=["name"]
-        )
-    )
 
 
 @frappe.whitelist()
@@ -288,174 +262,124 @@ def products(months: int = 3) -> dict:
     months = max(1, min(int(months or 3), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
-    end = get_last_day(today)
-    prev_start = get_first_day(add_months(today, -(2 * months - 1)))
-    prev_end = get_last_day(add_months(today, -months))
+    end = today
+    prev_start = add_months(start, -months)
+    prev_end = add_months(today, -months)
     names = _npp_names()
     if not names:
         return {"months": months, "top": [], "groups": []}
 
     cur = frappe.db.sql(
-        """
-        SELECT sii.item_code, sii.item_name, i.item_group,
-               COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty
-        FROM `tabSales Invoice Item` sii
-        JOIN `tabSales Invoice` si ON sii.parent=si.name
-        JOIN `tabItem` i ON sii.item_code=i.item_code
-        WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
-          AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-        GROUP BY sii.item_code, sii.item_name, i.item_group
-        ORDER BY rev DESC
-        """,
-        (names, start, end), as_dict=True,
-    )
+        """SELECT sii.item_code, sii.item_name, i.item_group,
+                  COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           JOIN `tabItem` i ON sii.item_code=i.item_code
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
+           GROUP BY sii.item_code, sii.item_name, i.item_group ORDER BY rev DESC""",
+        (names, start, end), as_dict=True)
     prev = {r["item_code"]: flt(r["rev"]) for r in frappe.db.sql(
-        """
-        SELECT sii.item_code, COALESCE(SUM(sii.amount),0) AS rev
-        FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
-        WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
-          AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-        GROUP BY sii.item_code
-        """,
-        (names, prev_start, prev_end), as_dict=True,
-    )}
-
+        """SELECT sii.item_code, COALESCE(SUM(sii.amount),0) AS rev
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY sii.item_code""",
+        (names, prev_start, prev_end), as_dict=True)}
     top = []
     for r in cur:
-        rev = flt(r["rev"])
-        p = prev.get(r["item_code"], 0.0)
-        top.append({
-            "item_code": r["item_code"], "item_name": r["item_name"], "item_group": r["item_group"],
-            "revenue": rev, "qty": flt(r["qty"]), "prev_revenue": p,
-            "growth_pct": ((rev - p) / p * 100) if p else None,
-        })
+        rev = flt(r["rev"]); p = prev.get(r["item_code"], 0.0)
+        top.append({"item_code": r["item_code"], "item_name": r["item_name"], "item_group": r["item_group"],
+                    "revenue": rev, "qty": flt(r["qty"]), "prev_revenue": p,
+                    "growth_pct": ((rev - p) / p * 100) if p else None})
 
     total_npp = len(names)
     groups = [
-        {
-            "item_group": r["item_group"], "revenue": flt(r["rev"]), "qty": flt(r["qty"]),
-            "buyers": int(r["buyers"]), "total_npp": total_npp,
-            "coverage_pct": (int(r["buyers"]) / total_npp * 100) if total_npp else 0,
-        }
+        {"item_group": r["item_group"], "revenue": flt(r["rev"]), "qty": flt(r["qty"]),
+         "buyers": int(r["buyers"]), "total_npp": total_npp,
+         "coverage_pct": (int(r["buyers"]) / total_npp * 100) if total_npp else 0}
         for r in frappe.db.sql(
-            """
-            SELECT i.item_group, COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty,
-                   COUNT(DISTINCT si.customer) AS buyers
-            FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
-            JOIN `tabItem` i ON sii.item_code=i.item_code
-            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
-              AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-            GROUP BY i.item_group ORDER BY rev DESC
-            """,
-            (names, start, end), as_dict=True)
-    ]
+            """SELECT i.item_group, COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty,
+                      COUNT(DISTINCT si.customer) AS buyers
+               FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+               JOIN `tabItem` i ON sii.item_code=i.item_code
+               WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+                 AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
+               GROUP BY i.item_group ORDER BY rev DESC""", (names, start, end), as_dict=True)]
     return {"months": months, "top": top, "groups": groups}
 
 
 @frappe.whitelist()
 def white_space(item_group: str, months: int = 3) -> list[dict]:
-    """NPP đang phát sinh doanh số nhưng CHƯA mua nhóm `item_group` trong kỳ → cơ hội cross-sell."""
+    """NPP đang phát sinh doanh số nhưng CHƯA mua nhóm `item_group` trong kỳ → cross-sell."""
     _guard()
     months = max(1, min(int(months or 3), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
-    end = get_last_day(today)
+    end = today
     names = _npp_names()
     if not names or not item_group:
         return []
-
-    bought = {
-        r[0] for r in frappe.db.sql(
-            """
-            SELECT DISTINCT si.customer
-            FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
-            JOIN `tabItem` i ON sii.item_code=i.item_code
-            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
-              AND i.item_group=%s AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
-            """,
-            (names, start, end, item_group))
-    }
+    bought = {r[0] for r in frappe.db.sql(
+        """SELECT DISTINCT si.customer FROM `tabSales Invoice Item` sii
+           JOIN `tabSales Invoice` si ON sii.parent=si.name JOIN `tabItem` i ON sii.item_code=i.item_code
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND i.item_group=%s AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')""",
+        (names, start, end, item_group))}
     rev_rows = frappe.db.sql(
-        """
-        SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v
-        FROM `tabSales Invoice`
-        WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
-          AND IFNULL(is_opening,'No')!='Yes'
-        GROUP BY customer
-        """,
-        (names, start, end), as_dict=True,
-    )
-    info = {
-        c["name"]: c for c in frappe.get_all(
-            "Customer", filters={"name": ["in", list(names)]},
-            fields=["name", "customer_name", "territory"])
-    }
-    out = [
-        {
-            "customer": r["k"],
-            "customer_name": (info.get(r["k"]) or {}).get("customer_name") or r["k"],
-            "territory": (info.get(r["k"]) or {}).get("territory") or "",
-            "revenue": flt(r["v"]),
-        }
-        for r in rev_rows if r["k"] not in bought and flt(r["v"]) > 0
-    ]
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""", (names, start, end), as_dict=True)
+    info = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
+    out = [{"customer": r["k"], "customer_name": (info.get(r["k"]) or {}).get("customer_name") or r["k"],
+            "territory": _resolve_province((info.get(r["k"]) or {}).get("territory"), (info.get(r["k"]) or {}).get("customer_name")),
+            "revenue": flt(r["v"])}
+           for r in rev_rows if r["k"] not in bought and flt(r["v"]) > 0]
     out.sort(key=lambda x: x["revenue"], reverse=True)
     return out
 
 
 @frappe.whitelist()
 def targets(months: int = 1) -> dict:
-    """% hoàn thành mục tiêu: doanh số kỳ vs (target tháng × số tháng). Target nhập ở Customer.custom_monthly_target."""
+    """% hoàn thành mục tiêu. So theo TIẾN ĐỘ tháng (expected pace), không so target cả tháng."""
     _guard()
     months = max(1, min(int(months or 1), 36))
     today = getdate()
     start = get_first_day(add_months(today, -(months - 1)))
-    end = get_last_day(today)
+    end = today
     customers = frappe.get_all(
-        "Customer",
-        filters={"customer_group": NPP_GROUP, "disabled": 0},
-        fields=["name", "customer_name", "territory", "custom_monthly_target"],
-        order_by="customer_name asc",
-    )
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0},
+        fields=["name", "customer_name", "territory", "custom_monthly_target"], order_by="customer_name asc")
     if not customers:
-        return {"months": months, "rows": [], "totals": {}}
+        return {"months": months, "rows": [], "totals": {}, "expected_pace_pct": 0}
     names = tuple(c["name"] for c in customers)
     rev_map = _sum_by_customer(
-        """
-        SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v
-        FROM `tabSales Invoice`
-        WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
-          AND IFNULL(is_opening,'No')!='Yes'
-        GROUP BY customer
-        """,
-        (names, start, end),
-    )
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""", (names, start, end))
+    # Tiến độ kỳ vọng: số ngày đã qua / tổng số ngày của kỳ (để biết "đang đúng nhịp" chưa)
+    total_days = (months - 1) * 30 + get_last_day(today).day
+    elapsed_days = (months - 1) * 30 + today.day
+    expected_pace = (elapsed_days / total_days * 100) if total_days else 0
     rows = []
     t_target = t_rev = 0.0
     for c in customers:
         monthly_t = flt(c.get("custom_monthly_target"))
         target = monthly_t * months
         rev = rev_map.get(c["name"], 0.0)
-        t_target += target
-        t_rev += rev
-        rows.append({
-            "customer": c["name"], "customer_name": c["customer_name"],
-            "territory": c.get("territory") or "", "monthly_target": monthly_t,
-            "target": target, "revenue": rev,
-            "attainment_pct": (rev / target * 100) if target else None,
-        })
-    # NPP có target nhưng đạt thấp lên đầu
+        t_target += target; t_rev += rev
+        rows.append({"customer": c["name"], "customer_name": c["customer_name"],
+                     "territory": _resolve_province(c.get("territory"), c["customer_name"]),
+                     "monthly_target": monthly_t, "target": target, "revenue": rev,
+                     "attainment_pct": (rev / target * 100) if target else None})
     rows.sort(key=lambda x: (x["attainment_pct"] is None, x["attainment_pct"] or 0))
-    return {
-        "months": months, "rows": rows,
-        "totals": {"target": t_target, "revenue": t_rev,
-                   "attainment_pct": (t_rev / t_target * 100) if t_target else None},
-    }
+    return {"months": months, "rows": rows, "expected_pace_pct": expected_pace,
+            "totals": {"target": t_target, "revenue": t_rev,
+                       "attainment_pct": (t_rev / t_target * 100) if t_target else None}}
 
 
 @frappe.whitelist()
 def set_target(customer: str, amount) -> dict:
-    """Nhập/cập nhật mục tiêu doanh số THÁNG cho 1 NPP (Currency)."""
+    """Nhập/cập nhật mục tiêu doanh số THÁNG cho 1 NPP."""
     _guard()
     if not frappe.db.exists("Customer", customer):
         frappe.throw(_("Customer không tồn tại: {0}").format(customer))
@@ -465,7 +389,7 @@ def set_target(customer: str, amount) -> dict:
 
 @frappe.whitelist()
 def insights() -> dict:
-    """Cảnh báo hành động: NPP ngủ đông · tụt doanh số · nợ + ngừng mua."""
+    """Cảnh báo hành động — 1 dòng/NPP (cờ nặng nhất). So sánh MTD-aligned (cùng số ngày)."""
     _guard()
     today = getdate()
     names = _npp_names()
@@ -480,38 +404,46 @@ def insights() -> dict:
     debt_map = _sum_by_customer(
         "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
-    this_rev = _sum_by_customer(
+
+    # MTD aligned: cùng số ngày đã qua của tháng
+    elapsed = today.day
+    this_start = get_first_day(today)
+    prev_first = get_first_day(add_months(today, -1))
+    prev_end = add_days(prev_first, elapsed - 1)
+    this_mtd = _sum_by_customer(
         "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
-        (names, get_first_day(today), get_last_day(today)))
-    prev_rev = _sum_by_customer(
+        (names, this_start, today))
+    prev_mtd = _sum_by_customer(
         "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
-        (names, get_first_day(add_months(today, -1)), get_last_day(add_months(today, -1))))
+        (names, prev_first, prev_end))
 
     alerts = []
     for c in names:
         nm = (info.get(c) or {}).get("customer_name") or c
-        terr = (info.get(c) or {}).get("territory") or ""
+        terr = _resolve_province((info.get(c) or {}).get("territory"), nm)
         last_d = last.get(c)
         debt = debt_map.get(c, 0.0)
-        tr = this_rev.get(c, 0.0)
-        pr = prev_rev.get(c, 0.0)
         days = date_diff(today, last_d) if last_d else None
 
+        # 1 dòng/NPP — cờ nặng nhất (P0-3). "Tụt 100%" đã gộp vào "ngủ đông".
         if debt > 0 and days is not None and days > 30:
             alerts.append({"type": "debt_risk", "level": "danger", "customer": c, "customer_name": nm,
                            "territory": terr, "value": debt,
                            "message": f"Còn nợ {debt:,.0f}đ nhưng đã {days} ngày không mua"})
-        elif last_d and days is not None and days > DORMANT_DAYS:
+        elif last_d is not None and days is not None and days > DORMANT_DAYS:
             alerts.append({"type": "dormant", "level": "warning", "customer": c, "customer_name": nm,
                            "territory": terr, "value": debt,
                            "message": f"Ngủ đông — {days} ngày chưa đặt hàng"})
-        if pr > 0 and tr < pr * 0.5:
-            drop = (1 - tr / pr) * 100
-            alerts.append({"type": "declining", "level": "warning", "customer": c, "customer_name": nm,
-                           "territory": terr, "value": pr - tr,
-                           "message": f"Doanh số tháng này giảm {drop:.0f}% so với tháng trước"})
+        else:
+            pr = prev_mtd.get(c, 0.0)
+            tr = this_mtd.get(c, 0.0)
+            if pr > 0 and tr < pr * 0.5:
+                drop = (1 - tr / pr) * 100
+                alerts.append({"type": "declining", "level": "warning", "customer": c, "customer_name": nm,
+                               "territory": terr, "value": pr - tr,
+                               "message": f"DS {elapsed} ngày đầu tháng giảm {drop:.0f}% so cùng kỳ tháng trước"})
 
     order = {"danger": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda a: (order.get(a["level"], 9), -a["value"]))

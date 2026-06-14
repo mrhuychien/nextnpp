@@ -1,13 +1,22 @@
 // Pure utility helpers. No side effects, no DOM.
 
-const VND = new Intl.NumberFormat('vi-VN');
+const VND = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 });
 
 export function formatNumber(n) {
     if (n === null || n === undefined || isNaN(n)) return '0';
-    return VND.format(Number(n));
+    return VND.format(Math.round(Number(n)));
 }
 
 export function formatCurrency(n) {
+    return formatNumber(n) + ' ₫';
+}
+
+/** Rút gọn tiền VND cho thẻ lớn: 1.600.000.000 → "1,6 tỷ"; 33.000.000 → "33 tr". */
+export function formatVNDShort(n) {
+    n = Number(n) || 0;
+    const a = Math.abs(n);
+    if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace('.', ',') + ' tỷ';
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.', ',') + ' tr';
     return formatNumber(n) + ' ₫';
 }
 

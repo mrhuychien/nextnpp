@@ -525,6 +525,13 @@
     color: var(--npp-text-2); font-weight: 600; font-size: 0.85rem;
 }
 .npp-ql-nav a.npp-active { background: var(--npp-season-grad); color: #fff; border-color: transparent; }
+.npp-risk-bar {
+    display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+    background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+    border-radius: var(--npp-radius-md); padding: 0.75rem 1rem; margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+}
+.npp-risk-bar strong { color: #b91c1c; }
 
 .npp-cta-block {
     display: flex;
