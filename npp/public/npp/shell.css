@@ -301,6 +301,7 @@
 /* ─── Utility classes (limited) ─── */
 .npp-flex { display: flex; }
 .npp-flex-col { display: flex; flex-direction: column; }
+.npp-flex-wrap { flex-wrap: wrap; }
 .npp-items-center { align-items: center; }
 .npp-justify-between { justify-content: space-between; }
 .npp-gap-1 { gap: 0.25rem; }

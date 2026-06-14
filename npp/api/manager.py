@@ -414,6 +414,12 @@ def targets(months: int = 1) -> dict:
         """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
            WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
              AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""", (names, start, end))
+    # Gợi ý target: TB doanh số 3 tháng gần nhất × 1.1
+    sug_map = _sum_by_customer(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""",
+        (names, get_first_day(add_months(today, -2)), today))
     # Tiến độ kỳ vọng: số ngày đã qua / tổng số ngày của kỳ (để biết "đang đúng nhịp" chưa)
     total_days = (months - 1) * 30 + get_last_day(today).day
     elapsed_days = (months - 1) * 30 + today.day
@@ -428,6 +434,7 @@ def targets(months: int = 1) -> dict:
         rows.append({"customer": c["name"], "customer_name": c["customer_name"],
                      "territory": _resolve_province(c.get("territory"), c["customer_name"]),
                      "monthly_target": monthly_t, "target": target, "revenue": rev,
+                     "suggested": round(sug_map.get(c["name"], 0.0) / 3 * 1.1, -3),
                      "attainment_pct": (rev / target * 100) if target else None})
     rows.sort(key=lambda x: (x["attainment_pct"] is None, x["attainment_pct"] or 0))
     return {"months": months, "rows": rows, "expected_pace_pct": expected_pace,
@@ -443,6 +450,142 @@ def set_target(customer: str, amount) -> dict:
         frappe.throw(_("Customer không tồn tại: {0}").format(customer))
     frappe.db.set_value("Customer", customer, "custom_monthly_target", flt(amount))
     return {"customer": customer, "monthly_target": flt(amount)}
+
+
+@frappe.whitelist()
+def set_targets_bulk(data) -> dict:
+    """Nhập target hàng loạt: data = [{customer, amount}]."""
+    _guard()
+    if isinstance(data, str):
+        data = frappe.parse_json(data)
+    n = 0
+    for row in (data or []):
+        cust = (row.get("customer") or "").strip()
+        if cust and frappe.db.exists("Customer", cust):
+            frappe.db.set_value("Customer", cust, "custom_monthly_target", flt(row.get("amount")))
+            n += 1
+    return {"updated": n}
+
+
+def _acc(d: dict, k: str, v: float) -> None:
+    d[k] = d.get(k, 0.0) + v
+
+
+@frappe.whitelist()
+def receivables() -> dict:
+    """Tuổi nợ (aging) toàn kênh + top NPP nợ quá hạn + % sử dụng hạn mức tín dụng."""
+    _guard()
+    today = getdate()
+    names = _npp_names()
+    if not names:
+        return {"buckets": {}, "top": [], "credit": []}
+    rows = frappe.db.sql(
+        """SELECT customer, outstanding_amount AS amt, COALESCE(due_date, posting_date) AS due
+           FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0""",
+        (names,), as_dict=True)
+    buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
+    overdue_by: dict = {}
+    for r in rows:
+        amt = flt(r["amt"])
+        age = date_diff(today, r["due"]) if r["due"] else 0
+        if age <= 0:
+            buckets["current"] += amt
+        elif age <= 30:
+            buckets["d1_30"] += amt; _acc(overdue_by, r["customer"], amt)
+        elif age <= 60:
+            buckets["d31_60"] += amt; _acc(overdue_by, r["customer"], amt)
+        elif age <= 90:
+            buckets["d61_90"] += amt; _acc(overdue_by, r["customer"], amt)
+        else:
+            buckets["over_90"] += amt; _acc(overdue_by, r["customer"], amt)
+    info = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
+    top = sorted([
+        {"customer": k, "customer_name": (info.get(k) or {}).get("customer_name") or k,
+         "territory": _resolve_province((info.get(k) or {}).get("territory"), (info.get(k) or {}).get("customer_name")),
+         "overdue": v} for k, v in overdue_by.items()], key=lambda x: x["overdue"], reverse=True)[:20]
+
+    debt_all = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
+    credit = []
+    try:
+        lim: dict = {}
+        for r in frappe.get_all("Customer Credit Limit",
+                                filters={"parenttype": "Customer", "parent": ["in", list(names)]},
+                                fields=["parent", "credit_limit"]):
+            _acc(lim, r["parent"], flt(r["credit_limit"]))
+        for k, climit in lim.items():
+            if climit <= 0:
+                continue
+            out = debt_all.get(k, 0.0)
+            credit.append({"customer": k, "customer_name": (info.get(k) or {}).get("customer_name") or k,
+                           "credit_limit": climit, "outstanding": out, "usage_pct": out / climit * 100})
+        credit.sort(key=lambda x: x["usage_pct"], reverse=True)
+    except Exception:
+        credit = []
+    return {"buckets": buckets, "top": top, "credit": credit}
+
+
+@frappe.whitelist()
+def tet_tracking() -> dict:
+    """Theo dõi mùa Tết (Item Group 'Hàng Tết'): độ phủ, DS lũy kế vs LY, NPP chủ lực chưa nhập."""
+    _guard()
+    today = getdate()
+    names = _npp_names()
+    if not names:
+        return {}
+    tet_group = "Hàng Tết"
+    tet_year = today.year if today.month >= 11 else today.year - 1
+    tet_start = getdate(f"{tet_year}-11-01")
+    days_elapsed = max(1, date_diff(today, tet_start))
+    ly_start = getdate(f"{tet_year - 1}-11-01")
+    ly_to = add_days(ly_start, days_elapsed)
+    total_npp = len(names)
+
+    def tet_rev(s, e):
+        return flt(frappe.db.sql(
+            """SELECT COALESCE(SUM(sii.amount),0) FROM `tabSales Invoice Item` sii
+               JOIN `tabSales Invoice` si ON sii.parent=si.name JOIN `tabItem` i ON sii.item_code=i.item_code
+               WHERE si.docstatus=1 AND si.customer IN %s AND i.item_group=%s AND si.posting_date BETWEEN %s AND %s
+                 AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')""",
+            (names, tet_group, s, e))[0][0] or 0)
+
+    this_rev = tet_rev(tet_start, today)
+    ly_rev = tet_rev(ly_start, ly_to)
+    buyers = {r[0] for r in frappe.db.sql(
+        """SELECT DISTINCT si.customer FROM `tabSales Invoice Item` sii
+           JOIN `tabSales Invoice` si ON sii.parent=si.name JOIN `tabItem` i ON sii.item_code=i.item_code
+           WHERE si.docstatus=1 AND si.customer IN %s AND i.item_group=%s AND si.posting_date >= %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')""",
+        (names, tet_group, tet_start))}
+    weekly = [{"week": r["w"], "revenue": flt(r["v"])} for r in frappe.db.sql(
+        """SELECT DATE_FORMAT(si.posting_date, '%%x-W%%v') AS w, COALESCE(SUM(sii.amount),0) AS v
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           JOIN `tabItem` i ON sii.item_code=i.item_code
+           WHERE si.docstatus=1 AND si.customer IN %s AND i.item_group=%s AND si.posting_date >= %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY w ORDER BY w""",
+        (names, tet_group, tet_start), as_dict=True)]
+    rev90 = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date >= %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
+        (names, add_days(today, -90)))
+    info = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
+    not_buying = sorted([
+        {"customer": k, "customer_name": (info.get(k) or {}).get("customer_name") or k,
+         "territory": _resolve_province((info.get(k) or {}).get("territory"), (info.get(k) or {}).get("customer_name")),
+         "revenue": v} for k, v in rev90.items() if k not in buyers and v > 0],
+        key=lambda x: x["revenue"], reverse=True)[:20]
+    return {
+        "tet_year": tet_year, "tet_start": str(tet_start),
+        "coverage_pct": (len(buyers) / total_npp * 100) if total_npp else 0,
+        "buyers": len(buyers), "total_npp": total_npp,
+        "this_revenue": this_rev, "ly_revenue": ly_rev,
+        "yoy_pct": ((this_rev - ly_rev) / ly_rev * 100) if ly_rev else None,
+        "forecast": (this_rev / days_elapsed * 120),  # mùa Tết ~120 ngày (1/11–28/2)
+        "weekly": weekly, "not_buying": not_buying,
+    }
 
 
 @frappe.whitelist()

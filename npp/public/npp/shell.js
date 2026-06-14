@@ -42,6 +42,8 @@ const VIEW_MODULES = {
     '/ql-sp'      : () => import(withV('./views/quan-ly-sanpham.js')),
     '/ql-target'  : () => import(withV('./views/quan-ly-target.js')),
     '/ql-alert'   : () => import(withV('./views/quan-ly-alert.js')),
+    '/ql-debt'    : () => import(withV('./views/quan-ly-debt.js')),
+    '/ql-tet'     : () => import(withV('./views/quan-ly-tet.js')),
 };
 
 async function renderRoute(routeKey, ctx) {
@@ -71,6 +73,8 @@ router.add('/quan-ly',                 ({ query }) => { highlightActiveRoute('/q
 router.add('/ql-sp',                   ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-sp',      { query }); });
 router.add('/ql-target',               ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-target',  { query }); });
 router.add('/ql-alert',                ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-alert',   { query }); });
+router.add('/ql-debt',                 ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-debt',    { query }); });
+router.add('/ql-tet',                  ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-tet',     { query }); });
 
 // ─── 7. Header title sync ──────────────────────────────────────────────
 const TITLES = {
@@ -83,7 +87,9 @@ const TITLES = {
     '/quan-ly'    : 'Quản lý NPP',
     '/ql-sp'      : 'Phân tích sản phẩm',
     '/ql-target'  : 'Mục tiêu',
-    '/ql-alert'   : 'Cảnh báo',
+    '/ql-alert'   : 'Cần xử lý',
+    '/ql-debt'    : 'Công nợ',
+    '/ql-tet'     : 'Theo dõi Tết',
 };
 
 router.setBeforeNavigate(({ path }) => {
