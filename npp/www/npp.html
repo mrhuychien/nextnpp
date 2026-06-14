@@ -3,6 +3,7 @@
 {% block title %}NPP Portal{% endblock %}
 
 {% block head_include %}
+{% set npp_v = (frappe.utils.now() | replace(" ", "T") | replace(":", "-")) %}
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0f172a">
 
@@ -11,7 +12,33 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-<link rel="stylesheet" href="/assets/npp/npp/shell.css?v={{ frappe.utils.now() }}">
+<link rel="stylesheet" href="/assets/npp/npp/shell.css?v={{ npp_v }}">
+
+<!-- Import map: version-bust MỌI shared module (lib/, components/, views/_config).
+     ES static `import` KHÔNG kế thừa query ?v= của module cha → nếu không remap ở
+     đây, trình duyệt chạy bản cache cũ (Frappe cache /assets 'immutable' 1 năm) và
+     gây lỗi kiểu "does not provide an export named ...". PHẢI đặt trước mọi
+     <script type="module">. View modules tự cache-bust qua assetVersion trong shell.js. -->
+<script type="importmap">
+{
+  "imports": {
+    "/assets/npp/npp/lib/api.js": "/assets/npp/npp/lib/api.js?v={{ npp_v }}",
+    "/assets/npp/npp/lib/dom.js": "/assets/npp/npp/lib/dom.js?v={{ npp_v }}",
+    "/assets/npp/npp/lib/format.js": "/assets/npp/npp/lib/format.js?v={{ npp_v }}",
+    "/assets/npp/npp/lib/router.js": "/assets/npp/npp/lib/router.js?v={{ npp_v }}",
+    "/assets/npp/npp/lib/store.js": "/assets/npp/npp/lib/store.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/banner.js": "/assets/npp/npp/components/banner.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/bottom-nav.js": "/assets/npp/npp/components/bottom-nav.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/data-table.js": "/assets/npp/npp/components/data-table.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/empty-state.js": "/assets/npp/npp/components/empty-state.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/loading.js": "/assets/npp/npp/components/loading.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/modal.js": "/assets/npp/npp/components/modal.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/season-picker.js": "/assets/npp/npp/components/season-picker.js?v={{ npp_v }}",
+    "/assets/npp/npp/components/toast.js": "/assets/npp/npp/components/toast.js?v={{ npp_v }}",
+    "/assets/npp/npp/views/_config.js": "/assets/npp/npp/views/_config.js?v={{ npp_v }}"
+  }
+}
+</script>
 
 <script>
     // Inject server-side context into a global the SPA can read.
@@ -26,7 +53,7 @@
         csrfToken: "{{ frappe.session.csrf_token if frappe.session.csrf_token else '' }}",
         // Đổi mỗi lần tải trang (server-rendered) → cache-bust cho view module
         // lazy-load, vì /assets bị Frappe cache 'immutable' 1 năm.
-        assetVersion: {{ frappe.utils.now() | tojson }}
+        assetVersion: {{ npp_v | tojson }}
     };
 </script>
 {% endblock %}
