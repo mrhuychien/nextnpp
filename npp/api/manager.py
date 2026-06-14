@@ -504,3 +504,108 @@ def insights() -> dict:
     order = {"danger": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda a: (order.get(a["level"], 9), -a["value"]))
     return {"alerts": alerts}
+
+
+@frappe.whitelist()
+def action_center() -> dict:
+    """1 dòng/NPP: health score + giá trị rủi ro (tiền) + hành động gợi ý. Sort theo rủi ro."""
+    _guard()
+    today = getdate()
+    names = _npp_names()
+    if not names:
+        return {"rows": []}
+    cust = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
+    fl = {r["k"]: r for r in frappe.db.sql(
+        "SELECT customer AS k, MAX(posting_date) AS last, MIN(posting_date) AS first, COUNT(*) AS orders "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)}
+    debt = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
+    overdue = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND COALESCE(due_date,posting_date)<%s GROUP BY customer",
+        (names, today))
+    over90 = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND COALESCE(due_date,posting_date)<%s GROUP BY customer",
+        (names, add_days(today, -90)))
+    rev90 = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
+        (names, add_days(today, -90), today))
+    prev90 = _sum_by_customer(
+        "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
+        (names, add_days(today, -180), add_days(today, -90)))
+
+    rows = []
+    for c in names:
+        info = cust.get(c, {})
+        flc = fl.get(c, {})
+        last = flc.get("last"); first = flc.get("first"); orders = int(flc.get("orders") or 0)
+        days_since = date_diff(today, last) if last else None
+        d = debt.get(c, 0.0); od = overdue.get(c, 0.0); o90 = over90.get(c, 0.0)
+        r90 = rev90.get(c, 0.0); p90 = prev90.get(c, 0.0)
+
+        if last is None:
+            seg = "Chưa mua"
+        elif days_since > 90:
+            seg = "Mất"
+        elif days_since > 30:
+            seg = "Ngủ đông"
+        elif first and getdate(first) >= add_days(today, -90):
+            seg = "Mới"
+        elif r90 > p90 * 1.2:
+            seg = "Tăng trưởng"
+        elif r90 < p90 * 0.8:
+            seg = "Suy giảm"
+        else:
+            seg = "Ổn định"
+
+        avg_cycle = (date_diff(last, first) / (orders - 1)) if (orders > 1 and first and last) else None
+        overdue_reorder = bool(avg_cycle and days_since is not None and days_since > avg_cycle * 1.5)
+
+        health = 100
+        if seg == "Mất":
+            health -= 50
+        elif seg == "Ngủ đông":
+            health -= 30
+        elif seg == "Suy giảm":
+            health -= 20
+        if od > 0:
+            health -= 20
+        if o90 > 0:
+            health -= 15
+        if overdue_reorder:
+            health -= 10
+        health = max(0, min(100, health))
+
+        losing = (r90 / 3.0) if seg in ("Suy giảm", "Ngủ đông", "Mất") else 0.0
+        risk_value = od + losing
+
+        if od > 0:
+            action = "Gọi thu nợ"
+        elif seg in ("Ngủ đông", "Mất"):
+            action = "Chào tái đặt / thăm"
+        elif seg == "Suy giảm":
+            action = "Tìm hiểu & đẩy KM"
+        elif overdue_reorder:
+            action = "Nhắc tái đặt"
+        else:
+            action = "Theo dõi"
+
+        # Bỏ qua NPP khỏe, không rủi ro
+        if risk_value <= 0 and health >= 85 and not overdue_reorder:
+            continue
+
+        rows.append({
+            "customer": c, "customer_name": info.get("customer_name") or c,
+            "territory": _resolve_province(info.get("territory"), info.get("customer_name")),
+            "segment": seg, "health": health, "debt": d, "overdue": od, "over90": o90,
+            "days_since": days_since, "avg_cycle": round(avg_cycle, 1) if avg_cycle else None,
+            "risk_value": risk_value, "action": action,
+        })
+
+    rows.sort(key=lambda x: x["risk_value"], reverse=True)
+    return {"rows": rows}
