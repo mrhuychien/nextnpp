@@ -29,6 +29,7 @@ const STATUS_BADGE = {
     'Chưa mua':  'muted',
 };
 const RANK_BADGE = { A: 'success', B: 'primary', C: 'muted' };
+const SEGMENT_BADGE = { 'Mới': 'primary', 'Tăng trưởng': 'success', 'Ổn định': 'muted', 'Suy giảm': 'warning', 'Ngủ đông': 'warning', 'Mất': 'danger', 'Chưa mua': 'muted' };
 
 function navBar(active) {
     const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'],
@@ -65,20 +66,25 @@ export async function render({ container }) {
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Top 10 NPP theo doanh số</h3>
             <div class="npp-chart-wrap"><canvas id="npp-ql-top"></canvas></div></div>
 
+        <div class="npp-grid-2 npp-mt-3">
+            <div class="npp-card"><h3 class="npp-font-bold">Phân khúc vòng đời NPP</h3><div id="npp-ql-seg" class="npp-mt-2"></div></div>
+            <div class="npp-card"><h3 class="npp-font-bold">Mức độ tập trung (Pareto)</h3><div id="npp-ql-conc" class="npp-mt-2"></div></div>
+        </div>
+
         <div class="npp-card npp-mt-3">
             <h3 class="npp-font-bold">Danh sách NPP</h3>
             <div class="npp-ql-filters npp-mt-3">
                 <input id="npp-ql-search" class="npp-dh-search" placeholder="Tìm NPP...">
                 <select id="npp-ql-f-terr"><option value="">Tất cả tỉnh</option></select>
                 <select id="npp-ql-f-rank"><option value="">Mọi hạng</option><option value="A">Hạng A</option><option value="B">Hạng B</option><option value="C">Hạng C</option></select>
-                <select id="npp-ql-f-status"><option value="">Mọi trạng thái</option><option value="Hoạt động">Hoạt động</option><option value="Ngủ đông">Ngủ đông</option><option value="Chưa mua">Chưa mua</option></select>
+                <select id="npp-ql-f-seg"><option value="">Mọi phân khúc</option><option>Mới</option><option>Tăng trưởng</option><option>Ổn định</option><option>Suy giảm</option><option>Ngủ đông</option><option>Mất</option><option>Chưa mua</option></select>
             </div>
             <div id="npp-ql-table" class="npp-mt-3"><div class="npp-skeleton" style="height:240px;"></div></div>
         </div>
     `;
 
     document.getElementById('npp-ql-period').addEventListener('change', (e) => loadData(parseInt(e.target.value, 10) || 3));
-    ['npp-ql-search', 'npp-ql-f-terr', 'npp-ql-f-rank', 'npp-ql-f-status'].forEach((id) =>
+    ['npp-ql-search', 'npp-ql-f-terr', 'npp-ql-f-rank', 'npp-ql-f-seg'].forEach((id) =>
         document.getElementById(id).addEventListener('input', applyFilters));
     await loadData(3);
 }
@@ -90,6 +96,8 @@ async function loadData(months) {
         _rows = data.customers || [];
         renderKpis(data);
         renderRisk(data.risk || {});
+        renderSeg(data.segments || {});
+        renderConc(data.concentration || {});
         fillTerritoryFilter(_rows);
         charts.forEach((c) => c.destroy());
         charts = [];
@@ -216,12 +224,12 @@ function applyFilters() {
     const q = (document.getElementById('npp-ql-search').value || '').toLowerCase().trim();
     const fTerr = document.getElementById('npp-ql-f-terr').value;
     const fRank = document.getElementById('npp-ql-f-rank').value;
-    const fStatus = document.getElementById('npp-ql-f-status').value;
+    const fSeg = document.getElementById('npp-ql-f-seg').value;
     let rows = _rows.filter((r) =>
         (!q || (r.customer_name || '').toLowerCase().includes(q) || (r.customer || '').toLowerCase().includes(q)) &&
         (!fTerr || r.territory === fTerr) &&
         (!fRank || r.rank === fRank) &&
-        (!fStatus || r.status === fStatus));
+        (!fSeg || r.segment === fSeg));
     rows = rows.sort((a, b) => b.revenue - a.revenue);
     renderTable(rows);
 }
@@ -235,7 +243,7 @@ function renderTable(rows) {
             <thead><tr>
                 <th>NPP</th><th>Tỉnh</th><th>Hạng</th>
                 <th class="npp-text-end">Doanh số</th><th class="npp-text-end">Công nợ</th><th class="npp-text-end">Cần TT</th>
-                <th>Trạng thái</th><th></th>
+                <th>Phân khúc</th><th>Chu kỳ</th><th></th>
             </tr></thead>
             <tbody>
                 ${rows.map((r) => html`<tr>
@@ -245,13 +253,32 @@ function renderTable(rows) {
                     <td data-label="Doanh số" class="npp-text-end">${formatCurrency(r.revenue)}</td>
                     <td data-label="Công nợ" class="npp-text-end">${formatCurrency(r.debt)}</td>
                     <td data-label="Cần TT" class="npp-text-end" style="color:${r.required_payment > 0 ? 'var(--npp-warning)' : 'var(--npp-text-3)'};font-weight:700;">${formatCurrency(r.required_payment)}</td>
-                    <td data-label="Trạng thái"><span class="npp-badge npp-badge-${STATUS_BADGE[r.status] || 'muted'}">${escapeHtml(r.status)}</span></td>
+                    <td data-label="Phân khúc"><span class="npp-badge npp-badge-${SEGMENT_BADGE[r.segment] || 'muted'}">${escapeHtml(r.segment)}</span></td>
+                    <td data-label="Chu kỳ">${r.avg_cycle ? r.avg_cycle + 'd' : '—'}${r.days_since != null ? ' · ' + r.days_since + 'd' : ''}${r.overdue_reorder ? ' ⏰' : ''}</td>
                     <td><button class="npp-btn-primary npp-ql-view" data-c="${escapeHtml(r.customer)}" data-n="${escapeHtml(r.customer_name)}" type="button" style="padding:6px 12px;font-size:.8rem;">Xem</button></td>
                 </tr>`).join('')}
             </tbody>
         </table>
     `;
     root.querySelectorAll('.npp-ql-view').forEach((b) => b.addEventListener('click', () => showDetail(b.dataset.c, b.dataset.n)));
+}
+
+function renderSeg(seg) {
+    const root = document.getElementById('npp-ql-seg');
+    if (!root) return;
+    const order = ['Mới', 'Tăng trưởng', 'Ổn định', 'Suy giảm', 'Ngủ đông', 'Mất'];
+    root.innerHTML = order.map((k) => `<div class="npp-flex npp-justify-between" style="padding:6px 0;border-bottom:1px solid var(--npp-border);">
+        <span class="npp-badge npp-badge-${SEGMENT_BADGE[k] || 'muted'}">${k}</span><strong>${(seg && seg[k]) || 0}</strong></div>`).join('');
+}
+
+function renderConc(c) {
+    const root = document.getElementById('npp-ql-conc');
+    if (!root) return;
+    c = c || {};
+    root.innerHTML = `
+        <div class="npp-flex npp-justify-between" style="padding:6px 0;border-bottom:1px solid var(--npp-border);"><span>Top 5 NPP đóng góp</span><strong>${(c.top5_pct || 0).toFixed(0)}%</strong></div>
+        <div class="npp-flex npp-justify-between" style="padding:6px 0;border-bottom:1px solid var(--npp-border);"><span>Top 10 NPP đóng góp</span><strong>${(c.top10_pct || 0).toFixed(0)}%</strong></div>
+        <div class="npp-flex npp-justify-between" style="padding:6px 0;"><span>Số NPP tạo 80% doanh số</span><strong>${c.npp_for_80 || 0}</strong></div>`;
 }
 
 async function showDetail(customer, name) {

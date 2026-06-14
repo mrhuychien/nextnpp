@@ -133,6 +133,17 @@ def overview(months: int = 3) -> dict:
         "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)
     last_map = {r["k"]: r["last"] for r in fl_rows}
     first_map = {r["k"]: r["first"] for r in fl_rows}
+    # 90 ngày gần nhất vs 90 ngày trước đó — cho phân khúc vòng đời (P1-1)
+    rev90 = _sum_by_customer(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""",
+        (names, add_days(today, -90), today))
+    prev90 = _sum_by_customer(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""",
+        (names, add_days(today, -180), add_days(today, -90)))
 
     if is_tet:
         tet_year = today.year if month >= 11 else today.year - 1
@@ -151,6 +162,7 @@ def overview(months: int = 3) -> dict:
     rows = []
     t_rev = t_qty = t_debt = t_req = 0.0
     n_active = n_dormant = n_new = 0
+    seg_count = {"Mới": 0, "Tăng trưởng": 0, "Ổn định": 0, "Suy giảm": 0, "Ngủ đông": 0, "Mất": 0, "Chưa mua": 0}
     terr: dict = {}
     resolved_ok = 0
     for c in customers:
@@ -158,15 +170,41 @@ def overview(months: int = 3) -> dict:
         rev = rev_map.get(name, 0.0); qty = qty_map.get(name, 0.0)
         debt = debt_map.get(name, 0.0); req = req_of(name)
         orders = ord_map.get(name, 0); last = last_map.get(name); first = first_map.get(name)
+        days_since = date_diff(today, last) if last else None
+
         if last is None:
             status = "Chưa mua"
-        elif date_diff(today, last) <= DORMANT_DAYS:
+        elif days_since <= DORMANT_DAYS:
             status = "Hoạt động"; n_active += 1
         else:
             status = "Ngủ đông"; n_dormant += 1
+
+        # Phân khúc vòng đời (P1-1): recency + DS 90 ngày vs 90 ngày trước
+        r90 = rev90.get(name, 0.0); p90 = prev90.get(name, 0.0)
+        if last is None:
+            segment = "Chưa mua"
+        elif days_since > 90:
+            segment = "Mất"
+        elif days_since > 30:
+            segment = "Ngủ đông"
+        elif first and getdate(first) >= add_days(today, -90):
+            segment = "Mới"
+        elif r90 > p90 * 1.2:
+            segment = "Tăng trưởng"
+        elif r90 < p90 * 0.8:
+            segment = "Suy giảm"
+        else:
+            segment = "Ổn định"
+        seg_count[segment] = seg_count.get(segment, 0) + 1
+
         is_new = bool(first and getdate(first) >= start)
         if is_new:
             n_new += 1
+
+        # Chu kỳ đặt hàng (P1-2)
+        avg_cycle = (date_diff(last, first) / (orders - 1)) if (orders and orders > 1 and first and last) else None
+        overdue_reorder = bool(avg_cycle and days_since is not None and days_since > avg_cycle * 1.5)
+
         avg_month = rev / months
         rank = "A" if avg_month >= RANK_A else ("B" if avg_month >= RANK_B else "C")
         province = _resolve_province(c.get("territory"), c["customer_name"])
@@ -179,7 +217,23 @@ def overview(months: int = 3) -> dict:
             "customer": name, "customer_name": c["customer_name"], "territory": province,
             "revenue": rev, "qty": qty, "debt": debt, "required_payment": req,
             "orders": orders, "aov": (rev / orders) if orders else 0.0,
-            "last_order": str(last) if last else None, "status": status, "rank": rank, "is_new": is_new})
+            "last_order": str(last) if last else None, "days_since": days_since,
+            "status": status, "segment": segment, "rank": rank, "is_new": is_new,
+            "avg_cycle": round(avg_cycle, 1) if avg_cycle else None, "overdue_reorder": overdue_reorder})
+
+    # Pareto / tập trung rủi ro (P1-3)
+    sorted_rev = sorted((r["revenue"] for r in rows), reverse=True)
+    _tot = sum(sorted_rev) or 1
+    cum = 0.0; npp_for_80 = 0
+    for v in sorted_rev:
+        cum += v; npp_for_80 += 1
+        if cum >= _tot * 0.8:
+            break
+    concentration = {
+        "top5_pct": sum(sorted_rev[:5]) / _tot * 100,
+        "top10_pct": sum(sorted_rev[:10]) / _tot * 100,
+        "npp_for_80": npp_for_80,
+    }
 
     # ── So-kỳ PERIOD-ALIGNED (dời nguyên cửa sổ [start, today]) ─────────
     prev_rev = npp_rev(add_months(start, -months), add_months(today, -months))
@@ -234,6 +288,8 @@ def overview(months: int = 3) -> dict:
         "months": months,
         "policy": "tet" if is_tet else "normal",
         "customers": rows,
+        "segments": seg_count,
+        "concentration": concentration,
         "monthly": monthly,
         "by_group": by_group,
         "by_territory": sorted(terr.values(), key=lambda x: x["revenue"], reverse=True),
