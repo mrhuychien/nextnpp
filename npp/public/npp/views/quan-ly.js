@@ -1,8 +1,7 @@
 import { html } from '../lib/dom.js';
-import { formatCurrency, formatNumber, formatVNDShort, formatDate, escapeHtml } from '../lib/format.js';
+import { formatCurrency, formatNumber, formatVNDShort, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
-import { showModal } from '../components/modal.js';
 
 // ─── Dashboard QUẢN LÝ KÊNH (Phase 1: điều hành + phân tích NPP) ──────────
 // Quyền do server kiểm (npp.api.manager.* → role quản lý).
@@ -32,7 +31,7 @@ const RANK_BADGE = { A: 'success', B: 'primary', C: 'muted' };
 const SEGMENT_BADGE = { 'Mới': 'primary', 'Tăng trưởng': 'success', 'Ổn định': 'muted', 'Suy giảm': 'warning', 'Ngủ đông': 'warning', 'Mất': 'danger', 'Chưa mua': 'muted' };
 
 function navBar(active) {
-    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'],
+    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'], ['#/ql-npp', 'npp', '🔍 Chi tiết NPP'],
                    ['#/ql-target', 'tg', '🎯 Mục tiêu'], ['#/ql-alert', 'al', '🔔 Cần xử lý'],
                    ['#/ql-debt', 'db', '💰 Công nợ'], ['#/ql-tet', 'tet', '🧧 Tết']];
     return `<div class="npp-ql-nav">${items.map(([h, k, l]) =>
@@ -261,7 +260,7 @@ function renderTable(rows) {
             </tbody>
         </table>
     `;
-    root.querySelectorAll('.npp-ql-view').forEach((b) => b.addEventListener('click', () => showDetail(b.dataset.c, b.dataset.n)));
+    root.querySelectorAll('.npp-ql-view').forEach((b) => b.addEventListener('click', () => { location.hash = '#/ql-npp?c=' + encodeURIComponent(b.dataset.c); }));
 }
 
 function renderSeg(seg) {
@@ -280,43 +279,4 @@ function renderConc(c) {
         <div class="npp-flex npp-justify-between" style="padding:6px 0;border-bottom:1px solid var(--npp-border);"><span>Top 5 NPP đóng góp</span><strong>${(c.top5_pct || 0).toFixed(0)}%</strong></div>
         <div class="npp-flex npp-justify-between" style="padding:6px 0;border-bottom:1px solid var(--npp-border);"><span>Top 10 NPP đóng góp</span><strong>${(c.top10_pct || 0).toFixed(0)}%</strong></div>
         <div class="npp-flex npp-justify-between" style="padding:6px 0;"><span>Số NPP tạo 80% doanh số</span><strong>${c.npp_for_80 || 0}</strong></div>`;
-}
-
-async function showDetail(customer, name) {
-    showModal({ title: `NPP: ${escapeHtml(name)}`, body: '<div class="npp-skeleton" style="height:220px;"></div>' });
-    const mount = document.querySelector('#npp-modal-mount .npp-modal-body');
-    try {
-        const [kpi, due, orders] = await Promise.all([
-            api.call('npp.api.analytics.kpi', { months: 12, customer }),
-            api.call('npp.api.outstanding.payment_due', { customer }),
-            api.list('Sales Invoice', {
-                fields: ['name', 'posting_date', 'grand_total', 'outstanding_amount', 'status'],
-                filters: [['customer', '=', customer], ['docstatus', '=', 1]],
-                order_by: 'posting_date desc', limit: 10,
-            }),
-        ]);
-        if (!mount) return;
-        mount.innerHTML = html`
-            <div class="npp-kpi-grid">
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Doanh số 12 tháng</div><div class="npp-kpi-value">${formatCurrency(kpi.revenue)}</div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Sản lượng</div><div class="npp-kpi-value">${formatNumber(kpi.qty)} <span style="font-size:.8rem;font-weight:600;">thùng</span></div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Công nợ</div><div class="npp-kpi-value danger">${formatCurrency(due.current_debt)}</div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Cần thanh toán</div><div class="npp-kpi-value warning">${formatCurrency(due.required_payment)}</div></div>
-            </div>
-            <div class="npp-text-sm npp-text-muted npp-mt-3">10 đơn gần nhất:</div>
-            <table class="npp-table npp-mt-2">
-                <thead><tr><th>Hóa đơn</th><th>Ngày</th><th class="npp-text-end">Tổng</th><th class="npp-text-end">Còn nợ</th></tr></thead>
-                <tbody>
-                    ${(orders || []).map((o) => html`<tr>
-                        <td data-label="Hóa đơn">${escapeHtml(o.name)}</td>
-                        <td data-label="Ngày">${formatDate(o.posting_date)}</td>
-                        <td data-label="Tổng" class="npp-text-end">${formatCurrency(o.grand_total)}</td>
-                        <td data-label="Còn nợ" class="npp-text-end">${formatCurrency(o.outstanding_amount)}</td>
-                    </tr>`).join('') || '<tr><td colspan="4" class="npp-text-center npp-text-muted">Chưa có đơn</td></tr>'}
-                </tbody>
-            </table>
-        `;
-    } catch (err) {
-        if (mount) mount.innerHTML = `<div class="npp-empty"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
-    }
 }

@@ -819,3 +819,287 @@ def catalog_depth(months: int = 3, thin: int = 5) -> dict:
     # NPP doanh số cao mà danh mục mỏng = ưu tiên cross-sell
     rows.sort(key=lambda x: (not x["thin"], -x["revenue"]))
     return {"months": months, "thin": thin, "rows": rows}
+
+
+@frappe.whitelist()
+def npp_list() -> list[dict]:
+    """Danh sách NPP gọn cho ô chọn ở trang phân tích chi tiết."""
+    _guard()
+    rows = frappe.get_all(
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0},
+        fields=["name", "customer_name", "territory"], order_by="customer_name asc")
+    return [{"customer": r["name"], "customer_name": r["customer_name"],
+             "territory": _resolve_province(r.get("territory"), r["customer_name"])} for r in rows]
+
+
+@frappe.whitelist()
+def npp_detail(customer: str, months: int = 12) -> dict:
+    """Phân tích sâu 1 NPP: kinh doanh, tài chính, sản phẩm, nhóm hàng + khuyến nghị thị trường."""
+    _guard()
+    if not customer or not frappe.db.exists("Customer", customer):
+        frappe.throw(_("NPP không tồn tại"))
+    cinfo = frappe.db.get_value(
+        "Customer", customer,
+        ["customer_name", "territory", "customer_group", "creation", "custom_monthly_target"],
+        as_dict=True) or {}
+    if cinfo.get("customer_group") != NPP_GROUP:
+        frappe.throw(_("Khách hàng này không thuộc nhóm NPP"))
+
+    months = max(1, min(int(months or 12), 36))
+    today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+    end = today
+    prev_start = add_months(start, -months)
+    prev_end = add_months(today, -months)
+    ly_start = add_months(start, -12)
+    ly_end = add_months(today, -12)
+
+    def rev_between(s, e) -> float:
+        return flt(frappe.db.sql(
+            "SELECT COALESCE(SUM(grand_total),0) FROM `tabSales Invoice` "
+            "WHERE docstatus=1 AND customer=%s AND posting_date BETWEEN %s AND %s "
+            "AND IFNULL(is_opening,'No')!='Yes'", (customer, s, e))[0][0] or 0)
+
+    # ── Kinh doanh ──────────────────────────────────────────────────────
+    revenue = rev_between(start, end)
+    prev_rev = rev_between(prev_start, prev_end)
+    ly_rev = rev_between(ly_start, ly_end)
+    rev_12 = rev_between(get_first_day(add_months(today, -11)), today)
+    avg_monthly = rev_12 / 12.0
+    rank = "A" if avg_monthly >= RANK_A else ("B" if avg_monthly >= RANK_B else "C")
+
+    inv = frappe.db.sql(
+        "SELECT COUNT(*) AS n FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s "
+        "AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes'",
+        (customer, start, end), as_dict=True)[0]
+    orders = int(inv["n"] or 0)
+    aov = (revenue / orders) if orders else 0.0
+    qg = frappe.db.sql(
+        "SELECT COALESCE(SUM(sii.qty),0) AS qty, COUNT(DISTINCT sii.item_code) AS skus, "
+        "COUNT(DISTINCT i.item_group) AS grps "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "JOIN `tabItem` i ON sii.item_code=i.item_code "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date BETWEEN %s AND %s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')",
+        (customer, start, end), as_dict=True)[0]
+    qty = flt(qg["qty"]); skus = int(qg["skus"] or 0); groups_bought_n = int(qg["grps"] or 0)
+
+    # ── Vòng đời / nhịp đặt (all-time) ──────────────────────────────────
+    fl = frappe.db.sql(
+        "SELECT MAX(posting_date) AS last, MIN(posting_date) AS first, COUNT(*) AS n "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s", (customer,), as_dict=True)[0]
+    last = fl["last"]; first = fl["first"]; n_all = int(fl["n"] or 0)
+    days_since = date_diff(today, last) if last else None
+    avg_cycle = (date_diff(last, first) / (n_all - 1)) if (n_all > 1 and first and last) else None
+    next_expected = str(add_days(last, int(round(avg_cycle)))) if (avg_cycle and last) else None
+    overdue_reorder = bool(avg_cycle and days_since is not None and days_since > avg_cycle * 1.5)
+
+    r90 = rev_between(add_days(today, -90), today)
+    p90 = rev_between(add_days(today, -180), add_days(today, -90))
+    if last is None:
+        seg = "Chưa mua"
+    elif days_since > 90:
+        seg = "Mất"
+    elif days_since > 30:
+        seg = "Ngủ đông"
+    elif first and getdate(first) >= add_days(today, -90):
+        seg = "Mới"
+    elif r90 > p90 * 1.2:
+        seg = "Tăng trưởng"
+    elif r90 < p90 * 0.8:
+        seg = "Suy giảm"
+    else:
+        seg = "Ổn định"
+
+    # ── Xu hướng 12 tháng + overlay năm trước ───────────────────────────
+    trend_start = get_first_day(add_months(today, -11))
+    rev_by_m = {r["m"]: flt(r["v"]) for r in frappe.db.sql(
+        "SELECT DATE_FORMAT(posting_date,'%%Y-%%m') AS m, COALESCE(SUM(grand_total),0) AS v "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND posting_date>=%s "
+        "AND IFNULL(is_opening,'No')!='Yes' GROUP BY m", (customer, trend_start), as_dict=True)}
+    qty_by_m = {r["m"]: flt(r["v"]) for r in frappe.db.sql(
+        "SELECT DATE_FORMAT(si.posting_date,'%%Y-%%m') AS m, COALESCE(SUM(sii.qty),0) AS v "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date>=%s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY m",
+        (customer, trend_start), as_dict=True)}
+    ly_by_m = {r["m"]: flt(r["v"]) for r in frappe.db.sql(
+        "SELECT DATE_FORMAT(posting_date,'%%Y-%%m') AS m, COALESCE(SUM(grand_total),0) AS v "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND posting_date>=%s AND posting_date<%s "
+        "AND IFNULL(is_opening,'No')!='Yes' GROUP BY m",
+        (customer, add_months(trend_start, -12), trend_start), as_dict=True)}
+    monthly = []
+    for i in range(12):
+        d = getdate(add_months(trend_start, i))
+        k = d.strftime("%Y-%m")
+        lk = getdate(add_months(d, -12)).strftime("%Y-%m")
+        monthly.append({"month": d.strftime("%m/%Y"), "revenue": rev_by_m.get(k, 0.0),
+                        "qty": qty_by_m.get(k, 0.0), "revenue_ly": ly_by_m.get(lk, 0.0)})
+
+    # ── Tài chính ───────────────────────────────────────────────────────
+    buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
+    debt = overdue = 0.0
+    for r in frappe.db.sql(
+        "SELECT outstanding_amount AS amt, COALESCE(due_date,posting_date) AS due "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND outstanding_amount>0",
+        (customer,), as_dict=True):
+        amt = flt(r["amt"]); debt += amt
+        age = date_diff(today, r["due"]) if r["due"] else 0
+        if age <= 0:
+            buckets["current"] += amt
+        elif age <= 30:
+            buckets["d1_30"] += amt; overdue += amt
+        elif age <= 60:
+            buckets["d31_60"] += amt; overdue += amt
+        elif age <= 90:
+            buckets["d61_90"] += amt; overdue += amt
+        else:
+            buckets["over_90"] += amt; overdue += amt
+    dso = (debt / rev_12 * 365) if rev_12 else None
+
+    credit_limit = 0.0
+    try:
+        for r in frappe.get_all("Customer Credit Limit",
+                                filters={"parenttype": "Customer", "parent": customer},
+                                fields=["credit_limit"]):
+            credit_limit += flt(r["credit_limit"])
+    except Exception:
+        credit_limit = 0.0
+    credit_usage_pct = (debt / credit_limit * 100) if credit_limit else None
+
+    mrow = frappe.db.sql(
+        "SELECT COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.incoming_rate*sii.stock_qty),0) AS cogs "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date BETWEEN %s AND %s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')",
+        (customer, start, end), as_dict=True)[0]
+    m_rev = flt(mrow["rev"]); m_cogs = flt(mrow["cogs"])
+    margin_pct = ((m_rev - m_cogs) / m_rev * 100) if m_rev else None
+
+    # ── Mục tiêu ────────────────────────────────────────────────────────
+    monthly_target = flt(cinfo.get("custom_monthly_target"))
+    target = monthly_target * months
+    attainment_pct = (revenue / target * 100) if target else None
+    total_days = (months - 1) * 30 + get_last_day(today).day
+    elapsed_days = (months - 1) * 30 + today.day
+    pace = (elapsed_days / total_days * 100) if total_days else 0
+
+    # ── Sản phẩm ────────────────────────────────────────────────────────
+    cur_sku = frappe.db.sql(
+        "SELECT sii.item_code, sii.item_name, i.item_group, COALESCE(SUM(sii.amount),0) AS rev, "
+        "COALESCE(SUM(sii.qty),0) AS qty, COALESCE(SUM(sii.incoming_rate*sii.stock_qty),0) AS cogs "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "JOIN `tabItem` i ON sii.item_code=i.item_code "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date BETWEEN %s AND %s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') "
+        "GROUP BY sii.item_code, sii.item_name, i.item_group ORDER BY rev DESC",
+        (customer, start, end), as_dict=True)
+    prev_sku = {r["item_code"]: flt(r["rev"]) for r in frappe.db.sql(
+        "SELECT sii.item_code, COALESCE(SUM(sii.amount),0) AS rev "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date BETWEEN %s AND %s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY sii.item_code",
+        (customer, prev_start, prev_end), as_dict=True)}
+    total_rev_sku = sum(flt(r["rev"]) for r in cur_sku) or 0.0
+    products = []
+    for r in cur_sku:
+        rev = flt(r["rev"]); cogs = flt(r["cogs"]); p = prev_sku.get(r["item_code"], 0.0)
+        products.append({
+            "item_code": r["item_code"], "item_name": r["item_name"], "item_group": r["item_group"],
+            "revenue": rev, "qty": flt(r["qty"]),
+            "margin_pct": ((rev - cogs) / rev * 100) if rev else None,
+            "pct_of_total": (rev / total_rev_sku * 100) if total_rev_sku else 0,
+            "growth_pct": ((rev - p) / p * 100) if p else None})
+
+    # ── Nhóm hàng ───────────────────────────────────────────────────────
+    cur_grp = frappe.db.sql(
+        "SELECT i.item_group, COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty "
+        "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "JOIN `tabItem` i ON sii.item_code=i.item_code "
+        "WHERE si.docstatus=1 AND si.customer=%s AND si.posting_date BETWEEN %s AND %s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') "
+        "GROUP BY i.item_group ORDER BY rev DESC", (customer, start, end), as_dict=True)
+    bought_groups = {r["item_group"] for r in cur_grp}
+    total_grp_rev = sum(flt(r["rev"]) for r in cur_grp) or 0.0
+    by_group = [{"item_group": r["item_group"], "revenue": flt(r["rev"]), "qty": flt(r["qty"]),
+                 "pct": (flt(r["rev"]) / total_grp_rev * 100) if total_grp_rev else 0} for r in cur_grp]
+    names = _npp_names()
+    chan_groups = [r[0] for r in frappe.db.sql(
+        "SELECT i.item_group FROM `tabSales Invoice Item` sii "
+        "JOIN `tabSales Invoice` si ON sii.parent=si.name JOIN `tabItem` i ON sii.item_code=i.item_code "
+        "WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date>=%s "
+        "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') "
+        "GROUP BY i.item_group ORDER BY COALESCE(SUM(sii.amount),0) DESC",
+        (names, add_days(today, -365)))]
+    total_groups = len(chan_groups)
+    coverage_pct = (len(bought_groups) / total_groups * 100) if total_groups else 0
+    not_bought = [g for g in chan_groups if g not in bought_groups]
+
+    # ── Khuyến nghị thị trường ──────────────────────────────────────────
+    recs = []
+    if overdue > 0:
+        det = f"Nợ quá hạn {overdue:,.0f}đ"
+        if buckets["over_90"] > 0:
+            det += f", trong đó >90 ngày {buckets['over_90']:,.0f}đ"
+        recs.append({"icon": "🔴", "level": "danger", "title": "Thu hồi nợ quá hạn", "detail": det})
+    if credit_usage_pct is not None and credit_usage_pct >= 80:
+        recs.append({"icon": "⚠️", "level": "warning", "title": "Sắp chạm hạn mức tín dụng",
+                     "detail": f"Đã dùng {credit_usage_pct:.0f}% hạn mức ({debt:,.0f}/{credit_limit:,.0f}đ)"})
+    if seg in ("Ngủ đông", "Mất"):
+        recs.append({"icon": "📞", "level": "warning", "title": "Chào tái đặt / thăm NPP",
+                     "detail": f"{seg} — đã {days_since} ngày không phát sinh đơn"})
+    elif overdue_reorder:
+        recs.append({"icon": "⏰", "level": "primary", "title": "Nhắc tái đặt",
+                     "detail": f"Quá nhịp: {days_since} ngày (chu kỳ TB ~{round(avg_cycle)}d)"})
+    elif seg == "Suy giảm":
+        recs.append({"icon": "📉", "level": "warning", "title": "Tìm hiểu nguyên nhân & đẩy KM",
+                     "detail": "Doanh số 90 ngày giảm so với kỳ trước"})
+    if target and attainment_pct is not None and attainment_pct < pace * 0.8:
+        recs.append({"icon": "🎯", "level": "warning", "title": "Chậm so với mục tiêu",
+                     "detail": f"Mới đạt {attainment_pct:.0f}% (nhịp kỳ vọng ~{pace:.0f}%)"})
+    if margin_pct is not None and margin_pct < 10:
+        recs.append({"icon": "💧", "level": "warning", "title": "Biên lợi nhuận thấp",
+                     "detail": f"Biên LN chỉ {margin_pct:.1f}% — soát lại chiết khấu/giá bán"})
+    if not_bought:
+        recs.append({"icon": "🧩", "level": "primary", "title": "Cross-sell nhóm hàng chưa nhập",
+                     "detail": "Chưa nhập: " + ", ".join(not_bought[:5])})
+    drop_skus = [p for p in products if p["growth_pct"] is not None and p["growth_pct"] <= -40][:5]
+    if drop_skus:
+        recs.append({"icon": "🛒", "level": "muted", "title": "SKU đang rớt mạnh",
+                     "detail": ", ".join(p["item_name"] for p in drop_skus)})
+    if not recs:
+        recs.append({"icon": "✅", "level": "success", "title": "NPP khỏe mạnh",
+                     "detail": "Không có cảnh báo nổi bật — duy trì chăm sóc định kỳ."})
+
+    return {
+        "months": months,
+        "profile": {
+            "customer": customer, "customer_name": cinfo.get("customer_name") or customer,
+            "territory": _resolve_province(cinfo.get("territory"), cinfo.get("customer_name")),
+            "since": str(getdate(cinfo.get("creation"))) if cinfo.get("creation") else None,
+            "segment": seg, "rank": rank, "avg_monthly": avg_monthly,
+            "first_order": str(first) if first else None, "last_order": str(last) if last else None,
+            "days_since": days_since, "orders_all": n_all,
+            "avg_cycle": round(avg_cycle, 1) if avg_cycle else None,
+            "next_expected": next_expected, "overdue_reorder": overdue_reorder,
+        },
+        "sales": {
+            "revenue": revenue, "prev_revenue": prev_rev,
+            "growth_pct": ((revenue - prev_rev) / prev_rev * 100) if prev_rev else None,
+            "ly_revenue": ly_rev, "yoy_pct": ((revenue - ly_rev) / ly_rev * 100) if ly_rev else None,
+            "qty": qty, "orders": orders, "aov": aov, "skus": skus, "groups_bought": groups_bought_n,
+            "monthly": monthly,
+        },
+        "finance": {
+            "debt": debt, "overdue": overdue, "buckets": buckets, "dso": dso,
+            "credit_limit": credit_limit, "credit_usage_pct": credit_usage_pct,
+            "revenue": m_rev, "cogs": m_cogs, "gross_profit": m_rev - m_cogs, "margin_pct": margin_pct,
+        },
+        "target": {"monthly_target": monthly_target, "target": target,
+                   "attainment_pct": attainment_pct, "expected_pace_pct": pace},
+        "products": products[:40],
+        "item_groups": {"by_group": by_group, "coverage_pct": coverage_pct,
+                        "bought": len(bought_groups), "total_groups": total_groups,
+                        "not_bought": not_bought[:12]},
+        "recommendations": recs,
+    }

@@ -4,7 +4,7 @@ import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 
 function nav(active) {
-    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'],
+    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'], ['#/ql-npp', 'npp', '🔍 Chi tiết NPP'],
                    ['#/ql-target', 'tg', '🎯 Mục tiêu'], ['#/ql-alert', 'al', '🔔 Cần xử lý'],
                    ['#/ql-debt', 'db', '💰 Công nợ'], ['#/ql-tet', 'tet', '🧧 Tết']];
     return `<div class="npp-ql-nav">${items.map(([h, k, l]) =>
@@ -61,7 +61,7 @@ function renderRows(rows) {
                         <td data-label="Sức khỏe" style="min-width:120px;">${healthBar(r.health)}</td>
                         <td data-label="Giá trị rủi ro" class="npp-text-end"><strong style="color:var(--npp-danger);">${formatVNDShort(r.risk_value)}</strong></td>
                         <td data-label="Hành động"><span class="npp-badge npp-badge-${ACTION_BADGE[r.action] || 'muted'}">${escapeHtml(r.action)}</span></td>
-                        <td><a href="#/quan-ly" class="npp-text-sm npp-link">Mở</a></td>
+                        <td><a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-text-sm npp-link">Mở</a></td>
                     </tr>`).join('')}
                 </tbody>
             </table>

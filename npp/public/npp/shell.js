@@ -40,6 +40,7 @@ const VIEW_MODULES = {
     '/thong-ke'   : () => import(withV('./views/thong-ke.js')),
     '/quan-ly'    : () => import(withV('./views/quan-ly.js')),
     '/ql-sp'      : () => import(withV('./views/quan-ly-sanpham.js')),
+    '/ql-npp'     : () => import(withV('./views/quan-ly-npp.js')),
     '/ql-target'  : () => import(withV('./views/quan-ly-target.js')),
     '/ql-alert'   : () => import(withV('./views/quan-ly-alert.js')),
     '/ql-debt'    : () => import(withV('./views/quan-ly-debt.js')),
@@ -71,6 +72,7 @@ router.add('/khuyen-mai',              ({ query }) => { highlightActiveRoute('/k
 router.add('/thong-ke',                ({ query }) => { highlightActiveRoute('/thong-ke');   return renderRoute('/thong-ke',   { query }); });
 router.add('/quan-ly',                 ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/quan-ly',    { query }); });
 router.add('/ql-sp',                   ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-sp',      { query }); });
+router.add('/ql-npp',                  ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-npp',     { query }); });
 router.add('/ql-target',               ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-target',  { query }); });
 router.add('/ql-alert',                ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-alert',   { query }); });
 router.add('/ql-debt',                 ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-debt',    { query }); });
@@ -86,6 +88,7 @@ const TITLES = {
     '/thong-ke'   : 'Thống kê',
     '/quan-ly'    : 'Quản lý NPP',
     '/ql-sp'      : 'Phân tích sản phẩm',
+    '/ql-npp'     : 'Chi tiết NPP',
     '/ql-target'  : 'Mục tiêu',
     '/ql-alert'   : 'Cần xử lý',
     '/ql-debt'    : 'Công nợ',

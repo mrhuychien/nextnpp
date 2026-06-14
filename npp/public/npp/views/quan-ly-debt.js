@@ -4,7 +4,7 @@ import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 
 function nav(active) {
-    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'],
+    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'], ['#/ql-npp', 'npp', '🔍 Chi tiết NPP'],
                    ['#/ql-target', 'tg', '🎯 Mục tiêu'], ['#/ql-alert', 'al', '🔔 Cần xử lý'],
                    ['#/ql-debt', 'db', '💰 Công nợ'], ['#/ql-tet', 'tet', '🧧 Tết']];
     return `<div class="npp-ql-nav">${items.map(([h, k, l]) =>
@@ -49,7 +49,7 @@ function renderDebt(d) {
                 <thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-end">Nợ quá hạn</th></tr></thead>
                 <tbody>
                     ${top.map((r) => html`<tr>
-                        <td data-label="NPP">${escapeHtml(r.customer_name)}</td>
+                        <td data-label="NPP"><a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td>
                         <td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td>
                         <td data-label="Nợ quá hạn" class="npp-text-end"><strong style="color:var(--npp-danger);">${formatCurrency(r.overdue)}</strong></td>
                     </tr>`).join('') || '<tr><td colspan="3" class="npp-text-center npp-text-muted">Không có nợ quá hạn 🎉</td></tr>'}
@@ -62,7 +62,7 @@ function renderDebt(d) {
                 <thead><tr><th>NPP</th><th class="npp-text-end">Hạn mức</th><th class="npp-text-end">Dư nợ</th><th class="npp-text-end">% dùng</th></tr></thead>
                 <tbody>
                     ${credit.map((r) => html`<tr>
-                        <td data-label="NPP">${r.usage_pct >= 100 ? '🔴 ' : (r.usage_pct >= 80 ? '🟠 ' : '')}${escapeHtml(r.customer_name)}</td>
+                        <td data-label="NPP">${r.usage_pct >= 100 ? '🔴 ' : (r.usage_pct >= 80 ? '🟠 ' : '')}<a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td>
                         <td data-label="Hạn mức" class="npp-text-end">${formatCurrency(r.credit_limit)}</td>
                         <td data-label="Dư nợ" class="npp-text-end">${formatCurrency(r.outstanding)}</td>
                         <td data-label="% dùng" class="npp-text-end"><strong style="color:${r.usage_pct >= 100 ? 'var(--npp-danger)' : (r.usage_pct >= 80 ? 'var(--npp-warning)' : 'var(--npp-text)')};">${r.usage_pct.toFixed(0)}%</strong></td>
