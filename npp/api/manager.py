@@ -327,7 +327,8 @@ def products(months: int = 3) -> dict:
 
     cur = frappe.db.sql(
         """SELECT sii.item_code, sii.item_name, i.item_group,
-                  COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty
+                  COALESCE(SUM(sii.amount),0) AS rev, COALESCE(SUM(sii.qty),0) AS qty,
+                  COALESCE(SUM(sii.incoming_rate * sii.stock_qty),0) AS cogs
            FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
            JOIN `tabItem` i ON sii.item_code=i.item_code
            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
@@ -342,10 +343,11 @@ def products(months: int = 3) -> dict:
         (names, prev_start, prev_end), as_dict=True)}
     top = []
     for r in cur:
-        rev = flt(r["rev"]); p = prev.get(r["item_code"], 0.0)
+        rev = flt(r["rev"]); cogs = flt(r["cogs"]); p = prev.get(r["item_code"], 0.0)
         top.append({"item_code": r["item_code"], "item_name": r["item_name"], "item_group": r["item_group"],
-                    "revenue": rev, "qty": flt(r["qty"]), "prev_revenue": p,
-                    "growth_pct": ((rev - p) / p * 100) if p else None})
+                    "revenue": rev, "qty": flt(r["qty"]), "cogs": cogs,
+                    "margin_pct": ((rev - cogs) / rev * 100) if rev else None,
+                    "prev_revenue": p, "growth_pct": ((rev - p) / p * 100) if p else None})
 
     total_npp = len(names)
     groups = [
@@ -609,3 +611,68 @@ def action_center() -> dict:
 
     rows.sort(key=lambda x: x["risk_value"], reverse=True)
     return {"rows": rows}
+
+
+@frappe.whitelist()
+def slow_skus(days: int = 60) -> list[dict]:
+    """SKU từng bán (12 tháng) nhưng KHÔNG phát sinh đơn trong `days` ngày gần nhất."""
+    _guard()
+    days = max(7, min(int(days or 60), 365))
+    today = getdate()
+    names = _npp_names()
+    if not names:
+        return []
+    recent = {r[0] for r in frappe.db.sql(
+        "SELECT DISTINCT sii.item_code FROM `tabSales Invoice Item` sii "
+        "JOIN `tabSales Invoice` si ON sii.parent=si.name "
+        "WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date >= %s AND sii.uom IN ('Thùng','Box')",
+        (names, add_days(today, -days)))}
+    rows = frappe.db.sql(
+        """SELECT sii.item_code, sii.item_name, MAX(si.posting_date) AS last_sold, COALESCE(SUM(sii.qty),0) AS qty
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date >= %s AND sii.uom IN ('Thùng','Box')
+           GROUP BY sii.item_code, sii.item_name ORDER BY last_sold ASC""",
+        (names, add_days(today, -365)), as_dict=True)
+    return [
+        {"item_code": r["item_code"], "item_name": r["item_name"], "last_sold": str(r["last_sold"]),
+         "qty": flt(r["qty"]), "days_since": date_diff(today, r["last_sold"])}
+        for r in rows if r["item_code"] not in recent
+    ]
+
+
+@frappe.whitelist()
+def catalog_depth(months: int = 3, thin: int = 5) -> dict:
+    """Số SKU phân biệt mỗi NPP mua (chiều sâu danh mục) — cờ NPP 'mỏng danh mục'."""
+    _guard()
+    months = max(1, min(int(months or 3), 36))
+    thin = max(1, int(thin or 5))
+    today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+    customers = frappe.get_all(
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0},
+        fields=["name", "customer_name", "territory"])
+    if not customers:
+        return {"months": months, "thin": thin, "rows": []}
+    names = tuple(c["name"] for c in customers)
+    sku_map = {r["k"]: int(r["v"]) for r in frappe.db.sql(
+        """SELECT si.customer AS k, COUNT(DISTINCT sii.item_code) AS v
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY si.customer""",
+        (names, start, today), as_dict=True)}
+    rev_map = _sum_by_customer(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""", (names, start, today))
+    rows = []
+    for c in customers:
+        rev = rev_map.get(c["name"], 0.0)
+        if rev <= 0:
+            continue
+        skus = sku_map.get(c["name"], 0)
+        rows.append({"customer": c["name"], "customer_name": c["customer_name"],
+                     "territory": _resolve_province(c.get("territory"), c["customer_name"]),
+                     "sku_count": skus, "revenue": rev, "thin": skus < thin})
+    # NPP doanh số cao mà danh mục mỏng = ưu tiên cross-sell
+    rows.sort(key=lambda x: (not x["thin"], -x["revenue"]))
+    return {"months": months, "thin": thin, "rows": rows}

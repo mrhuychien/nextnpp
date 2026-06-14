@@ -3,7 +3,8 @@ import { formatCurrency, formatNumber, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 
-let chartLib = null, charts = [], _groups = [], _months = 3;
+let chartLib = null, charts = [], _groups = [], _months = 3, _top = [];
+const _skuSort = { key: 'revenue', dir: -1 };
 
 async function loadChartLib() {
     if (chartLib) return chartLib;
@@ -43,6 +44,23 @@ export async function render({ container }) {
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Độ phủ nhóm hàng</h3><div id="npp-sp-groups" class="npp-mt-2"></div></div>
         <div class="npp-card npp-mt-3">
             <div class="npp-flex npp-justify-between npp-items-center">
+                <h3 class="npp-font-bold">Bảng SKU đầy đủ</h3>
+                <input id="npp-sp-skusearch" class="npp-dh-search" placeholder="Tìm SKU..." style="max-width:200px;">
+            </div>
+            <div id="npp-sp-skutable" class="npp-mt-2"></div>
+        </div>
+        <div class="npp-card npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-items-center">
+                <h3 class="npp-font-bold">SKU bán chậm / chết</h3>
+                <select id="npp-sp-slowdays" style="padding:8px 10px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);">
+                    <option value="60" selected>60 ngày</option><option value="90">90 ngày</option>
+                </select>
+            </div>
+            <div id="npp-sp-slow" class="npp-mt-2"></div>
+        </div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Chiều sâu danh mục (SKU/NPP)</h3><div id="npp-sp-depth" class="npp-mt-2"></div></div>
+        <div class="npp-card npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-items-center">
                 <h3 class="npp-font-bold">Cơ hội bán thêm (NPP chưa mua nhóm)</h3>
                 <select id="npp-sp-ws" style="padding:8px 10px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);"></select>
             </div>
@@ -51,6 +69,8 @@ export async function render({ container }) {
     `;
     document.getElementById('npp-sp-period').addEventListener('change', (e) => loadData(parseInt(e.target.value, 10) || 3));
     document.getElementById('npp-sp-ws').addEventListener('change', loadWhiteSpace);
+    document.getElementById('npp-sp-skusearch').addEventListener('input', renderSkuTable);
+    document.getElementById('npp-sp-slowdays').addEventListener('change', loadSlow);
     await loadData(3);
 }
 
@@ -64,6 +84,10 @@ async function loadData(months) {
         renderTop(Chart, d.top || []);
         renderMovers(d.top || []);
         renderGroups(_groups);
+        _top = d.top || [];
+        renderSkuTable();
+        loadSlow();
+        loadDepth();
         const sel = document.getElementById('npp-sp-ws');
         sel.innerHTML = _groups.map((g) => `<option value="${escapeHtml(g.item_group)}">${escapeHtml(g.item_group)}</option>`).join('');
         loadWhiteSpace();
@@ -111,6 +135,64 @@ function renderGroups(groups) {
             </tbody>
         </table>
     `;
+}
+
+function renderSkuTable() {
+    const root = document.getElementById('npp-sp-skutable');
+    if (!root) return;
+    const q = (document.getElementById('npp-sp-skusearch')?.value || '').toLowerCase().trim();
+    const { key, dir } = _skuSort;
+    let rows = _top.filter((r) => !q || (r.item_name || '').toLowerCase().includes(q) || (r.item_code || '').toLowerCase().includes(q));
+    rows = rows.slice().sort((a, b) => {
+        let av = a[key], bv = b[key];
+        if (av === null || av === undefined) av = -Infinity;
+        if (bv === null || bv === undefined) bv = -Infinity;
+        return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+    });
+    const hd = (k, label, end) => `<th class="${end ? 'npp-text-end' : ''}" data-sk="${k}" style="cursor:pointer;user-select:none;">${label}${key === k ? (dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
+    root.innerHTML = `<div style="overflow-x:auto;"><table class="npp-table">
+        <thead><tr>${hd('item_name', 'SKU')}<th>Nhóm</th>${hd('revenue', 'DS', 1)}${hd('qty', 'Thùng', 1)}${hd('margin_pct', 'Biên LN%', 1)}${hd('growth_pct', '%Thay đổi', 1)}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+            <td data-label="SKU">${escapeHtml(r.item_name)}</td>
+            <td data-label="Nhóm">${escapeHtml(r.item_group || '')}</td>
+            <td data-label="DS" class="npp-text-end">${formatCurrency(r.revenue)}</td>
+            <td data-label="Thùng" class="npp-text-end">${formatNumber(r.qty)}</td>
+            <td data-label="Biên LN%" class="npp-text-end">${r.margin_pct == null ? '—' : r.margin_pct.toFixed(1) + '%'}</td>
+            <td data-label="%Thay đổi" class="npp-text-end">${r.growth_pct == null ? '—' : (r.growth_pct >= 0 ? '▲' : '▼') + Math.abs(r.growth_pct).toFixed(0) + '%'}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="npp-text-center npp-text-muted">Không có SKU</td></tr>'}</tbody>
+    </table></div>`;
+    root.querySelectorAll('th[data-sk]').forEach((th) => th.addEventListener('click', () => {
+        const k = th.dataset.sk;
+        if (_skuSort.key === k) _skuSort.dir *= -1; else { _skuSort.key = k; _skuSort.dir = -1; }
+        renderSkuTable();
+    }));
+}
+
+async function loadSlow() {
+    const root = document.getElementById('npp-sp-slow');
+    if (!root) return;
+    const days = parseInt(document.getElementById('npp-sp-slowdays')?.value, 10) || 60;
+    root.innerHTML = '<div class="npp-skeleton" style="height:120px;"></div>';
+    try {
+        const list = await api.call('npp.api.manager.slow_skus', { days });
+        root.innerHTML = !list.length ? '<div class="npp-text-muted">Không có SKU chậm trong ngưỡng này.</div>' : `
+            <table class="npp-table"><thead><tr><th>SKU</th><th>Bán cuối</th><th class="npp-text-end">Số ngày</th><th class="npp-text-end">Thùng (12T)</th></tr></thead>
+            <tbody>${list.map((r) => `<tr><td data-label="SKU">${escapeHtml(r.item_name)}</td><td data-label="Bán cuối">${escapeHtml(r.last_sold)}</td><td data-label="Số ngày" class="npp-text-end">${r.days_since}</td><td data-label="Thùng" class="npp-text-end">${formatNumber(r.qty)}</td></tr>`).join('')}</tbody></table>`;
+    } catch (err) { root.innerHTML = `<div class="npp-text-muted">${escapeHtml(err.message)}</div>`; }
+}
+
+async function loadDepth() {
+    const root = document.getElementById('npp-sp-depth');
+    if (!root) return;
+    root.innerHTML = '<div class="npp-skeleton" style="height:120px;"></div>';
+    try {
+        const d = await api.call('npp.api.manager.catalog_depth', { months: _months });
+        const rows = d.rows || [];
+        root.innerHTML = !rows.length ? '<div class="npp-text-muted">Chưa có dữ liệu.</div>' : `
+            <p class="npp-text-sm npp-text-muted">⚠️ = danh mục mỏng (< ${d.thin} SKU) → ưu tiên cross-sell.</p>
+            <table class="npp-table npp-mt-2"><thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-end">Số SKU</th><th class="npp-text-end">Doanh số</th></tr></thead>
+            <tbody>${rows.map((r) => `<tr><td data-label="NPP">${r.thin ? '⚠️ ' : ''}${escapeHtml(r.customer_name)}</td><td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td><td data-label="Số SKU" class="npp-text-end">${r.sku_count}</td><td data-label="Doanh số" class="npp-text-end">${formatCurrency(r.revenue)}</td></tr>`).join('')}</tbody></table>`;
+    } catch (err) { root.innerHTML = `<div class="npp-text-muted">${escapeHtml(err.message)}</div>`; }
 }
 
 async function loadWhiteSpace() {
