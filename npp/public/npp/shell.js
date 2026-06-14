@@ -39,6 +39,9 @@ const VIEW_MODULES = {
     '/khuyen-mai' : () => import(withV('./views/khuyen-mai.js')),
     '/thong-ke'   : () => import(withV('./views/thong-ke.js')),
     '/quan-ly'    : () => import(withV('./views/quan-ly.js')),
+    '/ql-sp'      : () => import(withV('./views/quan-ly-sanpham.js')),
+    '/ql-target'  : () => import(withV('./views/quan-ly-target.js')),
+    '/ql-alert'   : () => import(withV('./views/quan-ly-alert.js')),
 };
 
 async function renderRoute(routeKey, ctx) {
@@ -65,6 +68,9 @@ router.add('/cong-no',                 ({ query }) => { highlightActiveRoute('/c
 router.add('/khuyen-mai',              ({ query }) => { highlightActiveRoute('/khuyen-mai'); return renderRoute('/khuyen-mai', { query }); });
 router.add('/thong-ke',                ({ query }) => { highlightActiveRoute('/thong-ke');   return renderRoute('/thong-ke',   { query }); });
 router.add('/quan-ly',                 ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/quan-ly',    { query }); });
+router.add('/ql-sp',                   ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-sp',      { query }); });
+router.add('/ql-target',               ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-target',  { query }); });
+router.add('/ql-alert',                ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-alert',   { query }); });
 
 // ─── 7. Header title sync ──────────────────────────────────────────────
 const TITLES = {
@@ -75,6 +81,9 @@ const TITLES = {
     '/khuyen-mai' : 'Khuyến mãi',
     '/thong-ke'   : 'Thống kê',
     '/quan-ly'    : 'Quản lý NPP',
+    '/ql-sp'      : 'Phân tích sản phẩm',
+    '/ql-target'  : 'Mục tiêu',
+    '/ql-alert'   : 'Cảnh báo',
 };
 
 router.setBeforeNavigate(({ path }) => {

@@ -30,9 +30,17 @@ const STATUS_BADGE = {
 };
 const RANK_BADGE = { A: 'success', B: 'primary', C: 'muted' };
 
+function navBar(active) {
+    const items = [['#/quan-ly', 'ov', '📊 Tổng quan'], ['#/ql-sp', 'sp', '📦 Sản phẩm'],
+                   ['#/ql-target', 'tg', '🎯 Mục tiêu'], ['#/ql-alert', 'al', '🔔 Cảnh báo']];
+    return `<div class="npp-ql-nav">${items.map(([h, k, l]) =>
+        `<a href="${h}" class="${k === active ? 'npp-active' : ''}">${l}</a>`).join('')}</div>`;
+}
+
 export async function render({ container }) {
     container.innerHTML = html`
         ${banner({ title: 'Quản lý kênh', subtitle: 'Phân tích doanh số & sức khỏe NPP toàn kênh' })}
+        ${navBar('ov')}
         <div class="npp-flex npp-justify-between npp-items-center">
             <h3 class="npp-font-bold">Tổng quan</h3>
             <select id="npp-ql-period" style="padding:8px 12px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);">

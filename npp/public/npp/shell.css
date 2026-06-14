@@ -518,6 +518,13 @@
     background: var(--npp-surface); color: var(--npp-text); font-weight: 600; font-size: 0.85rem;
 }
 .npp-ql-filters .npp-dh-search { flex: 1; min-width: 160px; }
+.npp-ql-nav { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+.npp-ql-nav a {
+    padding: 8px 14px; border-radius: 100px; text-decoration: none;
+    background: var(--npp-surface); border: 1px solid var(--npp-border);
+    color: var(--npp-text-2); font-weight: 600; font-size: 0.85rem;
+}
+.npp-ql-nav a.npp-active { background: var(--npp-season-grad); color: #fff; border-color: transparent; }
 
 .npp-cta-block {
     display: flex;

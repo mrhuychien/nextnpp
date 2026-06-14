@@ -150,5 +150,16 @@
   "no_copy": 1,
   "description": "Liên kết tài khoản đăng nhập với NPP (Customer). Portal lọc toàn bộ dữ liệu theo field này.",
   "module": "NPP Portal"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Customer-custom_monthly_target",
+  "dt": "Customer",
+  "fieldname": "custom_monthly_target",
+  "label": "Mục tiêu doanh số tháng (NPP)",
+  "fieldtype": "Currency",
+  "insert_after": "customer_group",
+  "description": "Chỉ tiêu doanh số mỗi tháng — dùng cho dashboard quản lý kênh (% hoàn thành).",
+  "module": "NPP Portal"
  }
 ]
