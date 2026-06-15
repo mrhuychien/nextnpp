@@ -22,6 +22,16 @@ Khi user đưa yêu cầu, hãy **phân loại intent** và **load đúng sub-sk
 | "permission audit", "SQL injection", "lộ data", "User Permission", "Role Permission Manager", "share", "secure whitelisted method" | `nextcode-security` |
 | "v14 lên v16", "v15 lên v16", "patches.txt", "schema migration", "data migration", "breaking changes", "rollback", "fixtures sync" | `nextcode-migrate` |
 
+### Skill bổ sung (companion — ngoài 8 sub-skill lõi)
+
+Rút từ kinh nghiệm ship thật một B2B portal + dashboard quản lý trên ERPNext v16:
+
+| Tín hiệu trong câu hỏi | Skill cần load |
+|---|---|
+| "portal SPA trên www page", "hash router", "code-split ES module", "Chart.js lazy", "asset cache sau deploy", "does not provide an export named", "import map", "CSS đè Bootstrap ERPNext" | `frappe-portal-spa` |
+| "phân tích doanh số", "dashboard quản lý kênh", "tăng trưởng so kỳ / YoY", "biên LN / COGS", "tuổi nợ / aging / DSO", "phân khúc khách / vòng đời", "Pareto", "% đạt mục tiêu", "loại hoá đơn opening", "chi tiết 1 khách" | `frappe-sales-analytics` |
+| "install-app No module named", "thiếu __init__.py", "field DocType chuẩn (User.customer)", "fieldname tiếng Việt có dấu", "sau deploy không thấy đổi", "thứ tự migrate/build/restart", "đồng bộ branch dev↔main" | `frappe-app-shipping-gotchas` |
+
 ## Quy tắc routing
 
 1. **Đọc kỹ câu hỏi đầu tiên của user.** Tìm tín hiệu khớp bảng trên.
