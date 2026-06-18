@@ -7,6 +7,7 @@ import frappe
 from frappe.utils import get_first_day, get_last_day, getdate
 
 from ._utils import require_customer
+from .outstanding import gl_balance
 
 
 @frappe.whitelist()
@@ -17,15 +18,10 @@ def summary(customer: str | None = None) -> dict:
     month_start = get_first_day(today)
     month_end = get_last_day(today)
 
-    # Outstanding (unpaid invoices)
-    outstanding_total = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(outstanding_amount), 0)
-        FROM `tabSales Invoice`
-        WHERE customer=%s AND docstatus=1 AND outstanding_amount > 0
-        """,
-        (customer,),
-    )[0][0] or 0
+    # "Công nợ hiện tại" = số dư phải thu từ GL (debit − credit), KHỚP với trang
+    # chi tiết công nợ. KHÔNG dùng SUM(outstanding_amount) vì lệch khi có khoản
+    # thu chưa đối trừ / credit note / bút toán điều chỉnh.
+    outstanding_total = gl_balance(customer)
 
     overdue_count = frappe.db.count(
         "Sales Invoice",

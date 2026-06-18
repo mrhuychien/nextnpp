@@ -10,6 +10,16 @@ from frappe.utils import add_days, add_months, date_diff, flt, get_first_day, ge
 from ._utils import require_customer
 
 
+def gl_balance(customer: str) -> float:
+    """Số dư công nợ phải thu từ GL (debit − credit) — nguồn CHUẨN cho 'công nợ
+    hiện tại'. Khớp đúng current_balance trong ledger_detail (cùng tập GL Entry
+    party=customer), nên trang chủ và trang chi tiết hiển thị BẰNG nhau."""
+    return flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(debit-credit),0) FROM `tabGL Entry` "
+        "WHERE is_cancelled=0 AND party_type='Customer' AND party=%s",
+        (customer,))[0][0] or 0)
+
+
 @frappe.whitelist()
 def summary(customer: str | None = None) -> dict:
     customer = require_customer(customer)
