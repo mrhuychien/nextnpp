@@ -21,6 +21,7 @@ from frappe.utils import (
 )
 
 from ._utils import is_manager
+from .outstanding import debt_breakdown, gl_balance
 
 # Cấu hình
 NPP_GROUP = "NPP"
@@ -537,31 +538,43 @@ def _acc(d: dict, k: str, v: float) -> None:
 
 @frappe.whitelist()
 def receivables() -> dict:
-    """Tuổi nợ (aging) toàn kênh + top NPP nợ quá hạn + % sử dụng hạn mức tín dụng."""
+    """Tuổi nợ (aging) toàn kênh + top NPP nợ quá hạn + % sử dụng hạn mức tín dụng.
+
+    Công nợ quá hạn tính theo SỐ DƯ GL (debit−credit) của từng NPP, phân bổ vào HĐ
+    mới nhất rồi lấy phần đã tới hạn — KHÔNG cộng dồn outstanding của HĐ cũ đã được
+    khoản thu chưa đối trừ bù trừ (cách cũ làm overdue & thứ hạng bị sai/phình to).
+    Khớp với cách trang Công nợ chi tiết tính.
+    """
     _guard()
     today = getdate()
     names = _npp_names()
     if not names:
         return {"buckets": {}, "top": [], "credit": []}
-    rows = frappe.db.sql(
-        """SELECT customer, outstanding_amount AS amt, COALESCE(due_date, posting_date) AS due
-           FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0""",
-        (names,), as_dict=True)
+
+    # Số dư công nợ thực theo từng NPP (GL) + HĐ còn nợ theo NPP
+    bal_map = {r["k"]: flt(r["v"]) for r in frappe.db.sql(
+        "SELECT party AS k, COALESCE(SUM(debit-credit),0) AS v FROM `tabGL Entry` "
+        "WHERE is_cancelled=0 AND party_type='Customer' AND party IN %s GROUP BY party",
+        (names,), as_dict=True)}
+    inv_by: dict = {}
+    for r in frappe.db.sql(
+        "SELECT customer, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 ORDER BY posting_date DESC",
+        (names,), as_dict=True):
+        inv_by.setdefault(r["customer"], []).append(r)
+
     buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
     overdue_by: dict = {}
-    for r in rows:
-        amt = flt(r["amt"])
-        age = date_diff(today, r["due"]) if r["due"] else 0
-        if age <= 0:
-            buckets["current"] += amt
-        elif age <= 30:
-            buckets["d1_30"] += amt; _acc(overdue_by, r["customer"], amt)
-        elif age <= 60:
-            buckets["d31_60"] += amt; _acc(overdue_by, r["customer"], amt)
-        elif age <= 90:
-            buckets["d61_90"] += amt; _acc(overdue_by, r["customer"], amt)
-        else:
-            buckets["over_90"] += amt; _acc(overdue_by, r["customer"], amt)
+    for c in names:
+        bal = bal_map.get(c, 0.0)
+        if bal <= 0:
+            continue
+        bd = debt_breakdown(bal, inv_by.get(c, []), today)
+        for k in buckets:
+            buckets[k] += bd["buckets"][k]
+        if bd["overdue"] > 0:
+            overdue_by[c] = bd["overdue"]
+
     info = {c["name"]: c for c in frappe.get_all(
         "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
     top = sorted([
@@ -569,9 +582,7 @@ def receivables() -> dict:
          "territory": _resolve_province((info.get(k) or {}).get("territory"), (info.get(k) or {}).get("customer_name")),
          "overdue": v} for k, v in overdue_by.items()], key=lambda x: x["overdue"], reverse=True)[:20]
 
-    debt_all = _sum_by_customer(
-        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
+    # Hạn mức tín dụng: dư nợ dùng số dư GL (đúng), so với hạn mức
     credit = []
     try:
         lim: dict = {}
@@ -582,7 +593,7 @@ def receivables() -> dict:
         for k, climit in lim.items():
             if climit <= 0:
                 continue
-            out = debt_all.get(k, 0.0)
+            out = max(0.0, bal_map.get(k, 0.0))
             credit.append({"customer": k, "customer_name": (info.get(k) or {}).get("customer_name") or k,
                            "credit_limit": climit, "outstanding": out, "usage_pct": out / climit * 100})
         credit.sort(key=lambda x: x["usage_pct"], reverse=True)
@@ -1001,24 +1012,15 @@ def npp_detail(customer: str, months: int = 12) -> dict:
                         "qty": qty_by_m.get(k, 0.0), "revenue_ly": ly_by_m.get(lk, 0.0)})
 
     # ── Tài chính ───────────────────────────────────────────────────────
-    buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
-    debt = overdue = 0.0
-    for r in frappe.db.sql(
-        "SELECT outstanding_amount AS amt, COALESCE(due_date,posting_date) AS due "
-        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND outstanding_amount>0",
-        (customer,), as_dict=True):
-        amt = flt(r["amt"]); debt += amt
-        age = date_diff(today, r["due"]) if r["due"] else 0
-        if age <= 0:
-            buckets["current"] += amt
-        elif age <= 30:
-            buckets["d1_30"] += amt; overdue += amt
-        elif age <= 60:
-            buckets["d31_60"] += amt; overdue += amt
-        elif age <= 90:
-            buckets["d61_90"] += amt; overdue += amt
-        else:
-            buckets["over_90"] += amt; overdue += amt
+    # Công nợ = số dư GL (đúng); tuổi nợ/quá hạn phân bổ vào HĐ mới nhất (debt_breakdown).
+    debt = gl_balance(customer)
+    _open_inv = frappe.db.sql(
+        "SELECT name, posting_date, due_date, grand_total, outstanding_amount "
+        "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND outstanding_amount>0 "
+        "ORDER BY COALESCE(due_date,posting_date) ASC", (customer,), as_dict=True)
+    _bd = debt_breakdown(debt, _open_inv, today)
+    buckets = _bd["buckets"]
+    overdue = _bd["overdue"]
     dso = (debt / rev_12 * 365) if rev_12 else None
 
     credit_limit = 0.0
@@ -1118,14 +1120,11 @@ def npp_detail(customer: str, months: int = 12) -> dict:
 
     # ── Lịch thanh toán (hoá đơn còn nợ, theo hạn) + các khoản đã thu ────
     open_invoices = [
-        {"invoice": r["name"], "posting_date": str(r["posting_date"]),
-         "due_date": str(r["due"]) if r["due"] else None, "grand_total": flt(r["grand_total"]),
-         "outstanding": flt(r["outstanding_amount"]),
-         "days_overdue": max(0, date_diff(today, r["due"])) if r["due"] else 0}
-        for r in frappe.db.sql(
-            "SELECT name, posting_date, COALESCE(due_date,posting_date) AS due, grand_total, outstanding_amount "
-            "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND outstanding_amount>0 "
-            "ORDER BY due ASC", (customer,), as_dict=True)]
+        {"invoice": r["name"], "posting_date": str(getdate(r["posting_date"])),
+         "due_date": str(getdate(r["due_date"])) if r.get("due_date") else None,
+         "grand_total": flt(r["grand_total"]), "outstanding": flt(r["outstanding_amount"]),
+         "days_overdue": max(0, date_diff(today, getdate(r["due_date"]) if r.get("due_date") else add_days(getdate(r["posting_date"]), 30)))}
+        for r in _open_inv]
     payments = []
     try:
         payments = [

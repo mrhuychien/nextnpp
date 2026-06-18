@@ -20,6 +20,43 @@ def gl_balance(customer: str) -> float:
         (customer,))[0][0] or 0)
 
 
+def debt_breakdown(balance, invoices, today=None) -> dict:
+    """Phân tích công nợ ĐÚNG: phân bổ số dư GL (`balance`) vào các HĐ MỚI NHẤT
+    (đối trừ HĐ cũ trước — khoản thu chưa đối trừ coi như đã trả HĐ cũ), rồi chia
+    tuổi nợ phần đã phân bổ. Tránh lỗi cộng dồn outstanding của HĐ cũ đã được bù.
+
+    invoices: list dict {posting_date, due_date, outstanding_amount} (thứ tự bất kỳ).
+    Trả: {overdue, in_term, buckets{current,d1_30,d31_60,d61_90,over_90}}.
+    """
+    today = today or getdate()
+    balance = flt(balance)
+    buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
+    if balance > 0:
+        remaining = balance
+        for inv in sorted(invoices, key=lambda x: getdate(x["posting_date"]), reverse=True):
+            if remaining <= 0:
+                break
+            out = flt(inv.get("outstanding_amount"))
+            if out <= 0:
+                continue
+            alloc = out if out <= remaining else remaining
+            remaining -= alloc
+            due = getdate(inv["due_date"]) if inv.get("due_date") else add_days(getdate(inv["posting_date"]), 30)
+            age = date_diff(today, due)
+            if age <= 0:
+                buckets["current"] += alloc
+            elif age <= 30:
+                buckets["d1_30"] += alloc
+            elif age <= 60:
+                buckets["d31_60"] += alloc
+            elif age <= 90:
+                buckets["d61_90"] += alloc
+            else:
+                buckets["over_90"] += alloc
+    in_term = buckets["current"]
+    return {"overdue": max(0.0, balance - in_term), "in_term": in_term, "buckets": buckets}
+
+
 @frappe.whitelist()
 def summary(customer: str | None = None) -> dict:
     customer = require_customer(customer)
