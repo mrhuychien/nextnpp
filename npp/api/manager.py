@@ -335,21 +335,55 @@ def products(months: int = 3) -> dict:
              AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
            GROUP BY sii.item_code, sii.item_name, i.item_group ORDER BY rev DESC""",
         (names, start, end), as_dict=True)
-    prev = {r["item_code"]: flt(r["rev"]) for r in frappe.db.sql(
-        """SELECT sii.item_code, COALESCE(SUM(sii.amount),0) AS rev
+    prev_rows = frappe.db.sql(
+        """SELECT sii.item_code, sii.item_name, COALESCE(SUM(sii.amount),0) AS rev
            FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
-             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY sii.item_code""",
-        (names, prev_start, prev_end), as_dict=True)}
+             AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
+           GROUP BY sii.item_code, sii.item_name""",
+        (names, prev_start, prev_end), as_dict=True)
+    prev = {r["item_code"]: flt(r["rev"]) for r in prev_rows}
+    name_of = {r["item_code"]: r["item_name"] for r in prev_rows}
     top = []
     for r in cur:
         rev = flt(r["rev"]); cogs = flt(r["cogs"]); p = prev.get(r["item_code"], 0.0)
+        name_of[r["item_code"]] = r["item_name"]
         top.append({"item_code": r["item_code"], "item_name": r["item_name"], "item_group": r["item_group"],
                     "revenue": rev, "qty": flt(r["qty"]), "cogs": cogs,
                     "margin_pct": ((rev - cogs) / rev * 100) if rev else None,
                     "prev_revenue": p, "growth_pct": ((rev - p) / p * 100) if p else None})
 
+    # ── Tăng/giảm mạnh: gộp cả SKU rớt về 0 (kỳ trước có, kỳ này vắng) + SKU mới ──
+    cur_rev = {r["item_code"]: flt(r["rev"]) for r in cur}
+    movers = []
+    for code in set(cur_rev) | set(prev):
+        rev = cur_rev.get(code, 0.0); p = prev.get(code, 0.0)
+        movers.append({"item_code": code, "item_name": name_of.get(code, code),
+                       "revenue": rev, "prev_revenue": p, "delta": rev - p,
+                       "growth_pct": ((rev - p) / p * 100) if p else None})
+    up_abs = sorted([m for m in movers if m["delta"] > 0], key=lambda x: x["delta"], reverse=True)[:10]
+    up_pct = sorted([m for m in movers if m["growth_pct"] is not None and m["growth_pct"] > 0],
+                    key=lambda x: x["growth_pct"], reverse=True)[:10]
+    down = sorted([m for m in movers if m["delta"] < 0], key=lambda x: x["delta"])[:10]
+    new_skus = sorted([m for m in movers if m["prev_revenue"] == 0 and m["revenue"] > 0],
+                      key=lambda x: x["revenue"], reverse=True)[:10]
+
     total_npp = len(names)
+    # ── Độ phủ SKU: mã hàng bán cho ÍT NPP nhất (cơ hội mở rộng phân phối) ──
+    coverage = sorted([
+        {"item_code": r["item_code"], "item_name": r["item_name"], "buyers": int(r["buyers"]),
+         "total_npp": total_npp, "missing": total_npp - int(r["buyers"]), "revenue": flt(r["rev"]),
+         "coverage_pct": (int(r["buyers"]) / total_npp * 100) if total_npp else 0}
+        for r in frappe.db.sql(
+            """SELECT sii.item_code, sii.item_name, COUNT(DISTINCT si.customer) AS buyers,
+                      COALESCE(SUM(sii.amount),0) AS rev
+               FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+               WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+                 AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
+               GROUP BY sii.item_code, sii.item_name""", (names, start, end), as_dict=True)
+        if int(r["buyers"]) < total_npp],
+        key=lambda x: (x["coverage_pct"], -x["revenue"]))[:40]
+
     groups = [
         {"item_group": r["item_group"], "revenue": flt(r["rev"]), "qty": flt(r["qty"]),
          "buyers": int(r["buyers"]), "total_npp": total_npp,
@@ -362,7 +396,37 @@ def products(months: int = 3) -> dict:
                WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
                  AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
                GROUP BY i.item_group ORDER BY rev DESC""", (names, start, end), as_dict=True)]
-    return {"months": months, "top": top, "groups": groups}
+    return {"months": months, "top": top, "groups": groups, "coverage": coverage,
+            "movers": {"up_abs": up_abs, "up_pct": up_pct, "down": down, "new": new_skus}}
+
+
+@frappe.whitelist()
+def sku_white_space(item_code: str, months: int = 3) -> list[dict]:
+    """NPP có doanh số trong kỳ nhưng CHƯA mua mã hàng `item_code` → cần thúc đẩy."""
+    _guard()
+    months = max(1, min(int(months or 3), 36))
+    today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+    end = today
+    names = _npp_names()
+    if not names or not item_code:
+        return []
+    bought = {r[0] for r in frappe.db.sql(
+        """SELECT DISTINCT si.customer FROM `tabSales Invoice Item` sii
+           JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
+             AND sii.item_code=%s AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')""",
+        (names, start, end, item_code))}
+    rev_rows = frappe.db.sql(
+        """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer""", (names, start, end), as_dict=True)
+    info = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name"])}
+    out = [{"customer": r["k"], "customer_name": (info.get(r["k"]) or {}).get("customer_name") or r["k"],
+            "revenue": flt(r["v"])} for r in rev_rows if r["k"] not in bought and flt(r["v"]) > 0]
+    out.sort(key=lambda x: x["revenue"], reverse=True)
+    return out
 
 
 @frappe.whitelist()

@@ -1,9 +1,9 @@
 import { html } from '../lib/dom.js';
-import { formatCurrency, formatNumber, escapeHtml } from '../lib/format.js';
+import { formatCurrency, formatNumber, formatVNDShort, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 
-let chartLib = null, charts = [], _groups = [], _months = 3, _top = [];
+let chartLib = null, charts = [], _groups = [], _months = 3, _top = [], _movers = {}, _upMode = 'abs';
 const _skuSort = { key: 'revenue', dir: -1 };
 
 async function loadChartLib() {
@@ -39,9 +39,20 @@ export async function render({ container }) {
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Top 10 sản phẩm (doanh số)</h3>
             <div class="npp-chart-wrap"><canvas id="npp-sp-top"></canvas></div></div>
         <div class="npp-grid-2 npp-mt-3">
-            <div class="npp-card"><h3 class="npp-font-bold">📈 Tăng mạnh</h3><div id="npp-sp-up" class="npp-mt-2"></div></div>
-            <div class="npp-card"><h3 class="npp-font-bold">📉 Giảm mạnh</h3><div id="npp-sp-down" class="npp-mt-2"></div></div>
+            <div class="npp-card">
+                <div class="npp-flex npp-justify-between npp-items-center">
+                    <h3 class="npp-font-bold">📈 Tăng mạnh (top 10)</h3>
+                    <div class="npp-flex" style="gap:4px;">
+                        <button type="button" class="npp-sp-upmode" data-mode="abs" style="padding:4px 10px;font-size:.75rem;border:1px solid var(--npp-border);border-radius:8px;background:var(--npp-season-grad);color:#fff;cursor:pointer;">Giá trị</button>
+                        <button type="button" class="npp-sp-upmode" data-mode="pct" style="padding:4px 10px;font-size:.75rem;border:1px solid var(--npp-border);border-radius:8px;background:var(--npp-surface);color:var(--npp-text);cursor:pointer;">%</button>
+                    </div>
+                </div>
+                <div id="npp-sp-up" class="npp-mt-2"></div>
+            </div>
+            <div class="npp-card"><h3 class="npp-font-bold">📉 Giảm mạnh (top 10 theo giá trị)</h3><div id="npp-sp-down" class="npp-mt-2"></div></div>
         </div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">🆕 Mã hàng mới phát sinh (kỳ trước chưa bán)</h3><div id="npp-sp-new" class="npp-mt-2"></div></div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Mã hàng chưa phủ hết NPP (cơ hội phân phối)</h3><div id="npp-sp-coverage" class="npp-mt-2"></div></div>
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Độ phủ nhóm hàng</h3><div id="npp-sp-groups" class="npp-mt-2"></div></div>
         <div class="npp-card npp-mt-3">
             <div class="npp-flex npp-justify-between npp-items-center">
@@ -72,6 +83,15 @@ export async function render({ container }) {
     document.getElementById('npp-sp-ws').addEventListener('change', loadWhiteSpace);
     document.getElementById('npp-sp-skusearch').addEventListener('input', renderSkuTable);
     document.getElementById('npp-sp-slowdays').addEventListener('change', loadSlow);
+    document.querySelectorAll('.npp-sp-upmode').forEach((b) => b.addEventListener('click', () => {
+        _upMode = b.dataset.mode;
+        document.querySelectorAll('.npp-sp-upmode').forEach((x) => {
+            const on = x === b;
+            x.style.background = on ? 'var(--npp-season-grad)' : 'var(--npp-surface)';
+            x.style.color = on ? '#fff' : 'var(--npp-text)';
+        });
+        renderMovers(_movers);
+    }));
     await loadData(3);
 }
 
@@ -83,7 +103,8 @@ async function loadData(months) {
         _groups = d.groups || [];
         charts.forEach((c) => c.destroy()); charts = [];
         renderTop(Chart, d.top || []);
-        renderMovers(d.top || []);
+        renderMovers(d.movers || {});
+        renderCoverage(d.coverage || []);
         renderGroups(_groups);
         _top = d.top || [];
         renderSkuTable();
@@ -108,18 +129,57 @@ function renderTop(Chart, top) {
 }
 
 function moverRow(x) {
-    const up = (x.growth_pct || 0) >= 0;
-    return `<div class="npp-flex npp-justify-between npp-text-sm" style="padding:6px 0;border-bottom:1px solid var(--npp-border);">
-        <span>${escapeHtml(x.item_name)}</span>
-        <strong style="color:${up ? 'var(--npp-success)' : 'var(--npp-danger)'};">${up ? '▲' : '▼'} ${Math.abs(x.growth_pct).toFixed(0)}%</strong></div>`;
+    const up = (x.delta || 0) >= 0;
+    const color = up ? 'var(--npp-success)' : 'var(--npp-danger)';
+    const pctTxt = x.growth_pct == null ? (x.prev_revenue ? '' : 'mới') : (up ? '▲' : '▼') + Math.abs(x.growth_pct).toFixed(0) + '%';
+    return `<div class="npp-flex npp-justify-between npp-text-sm" style="padding:6px 0;border-bottom:1px solid var(--npp-border);gap:8px;">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(x.item_name)}</span>
+        <span style="color:${color};font-weight:700;white-space:nowrap;">${up ? '+' : ''}${formatVNDShort(x.delta)}${pctTxt ? ' · ' + pctTxt : ''}</span></div>`;
 }
 
-function renderMovers(top) {
-    const withPrev = top.filter((x) => x.growth_pct !== null && x.growth_pct !== undefined && isFinite(x.growth_pct));
-    const up = [...withPrev].filter((x) => x.growth_pct > 0).sort((a, b) => b.growth_pct - a.growth_pct).slice(0, 8);
-    const down = [...withPrev].filter((x) => x.growth_pct < 0).sort((a, b) => a.growth_pct - b.growth_pct).slice(0, 8);
+function renderMovers(m) {
+    _movers = m || {};
+    const up = (_upMode === 'pct' ? _movers.up_pct : _movers.up_abs) || [];
+    const down = _movers.down || [];
+    const nw = _movers.new || [];
     document.getElementById('npp-sp-up').innerHTML = up.length ? up.map(moverRow).join('') : '<div class="npp-text-muted npp-text-sm">Không có</div>';
     document.getElementById('npp-sp-down').innerHTML = down.length ? down.map(moverRow).join('') : '<div class="npp-text-muted npp-text-sm">Không có</div>';
+    const nwEl = document.getElementById('npp-sp-new');
+    if (nwEl) nwEl.innerHTML = nw.length
+        ? nw.map((x) => `<span class="npp-badge npp-badge-primary" style="display:inline-block;margin:2px;">${escapeHtml(x.item_name)} · ${formatVNDShort(x.revenue)}</span>`).join('')
+        : '<div class="npp-text-muted npp-text-sm">Không có mã mới.</div>';
+}
+
+function renderCoverage(cov) {
+    const root = document.getElementById('npp-sp-coverage');
+    if (!root) return;
+    if (!cov.length) { root.innerHTML = '<div class="npp-text-muted">Mọi SKU đã phủ toàn bộ NPP 🎉</div>'; return; }
+    root.innerHTML = `<p class="npp-text-sm npp-text-muted">Sắp theo độ phủ thấp nhất — ưu tiên đẩy phân phối:</p>
+        <div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+        <thead><tr><th>SKU</th><th class="npp-text-end">Độ phủ</th><th class="npp-text-end">Thiếu</th><th class="npp-text-end">DS kỳ</th><th></th></tr></thead>
+        <tbody>${cov.map((r) => `<tr>
+            <td data-label="SKU">${escapeHtml(r.item_name)}</td>
+            <td data-label="Độ phủ" class="npp-text-end">${r.buyers}/${r.total_npp} (${(r.coverage_pct || 0).toFixed(0)}%)</td>
+            <td data-label="Thiếu" class="npp-text-end"><strong style="color:var(--npp-warning);">${r.missing}</strong></td>
+            <td data-label="DS kỳ" class="npp-text-end">${formatCurrency(r.revenue)}</td>
+            <td><a href="javascript:void(0)" class="npp-link npp-text-sm npp-sp-cov-drill" data-code="${escapeHtml(r.item_code)}" data-name="${escapeHtml(r.item_name)}">NPP thiếu →</a></td>
+        </tr>`).join('')}</tbody></table></div>
+        <div id="npp-sp-cov-detail" class="npp-mt-2"></div>`;
+    root.querySelectorAll('.npp-sp-cov-drill').forEach((a) => a.addEventListener('click', () => drillCoverage(a.dataset.code, a.dataset.name)));
+}
+
+async function drillCoverage(code, name) {
+    const root = document.getElementById('npp-sp-cov-detail');
+    if (!root) return;
+    root.innerHTML = '<div class="npp-skeleton" style="height:80px;"></div>';
+    try {
+        const list = await api.call('npp.api.manager.sku_white_space', { item_code: code, months: _months });
+        root.innerHTML = !list.length
+            ? `<div class="npp-text-muted">"${escapeHtml(name)}" đã phủ hết NPP có doanh số.</div>`
+            : `<div class="npp-card" style="background:var(--npp-surface-2);"><strong>${escapeHtml(name)}</strong> — ${list.length} NPP chưa nhập:
+                <table class="npp-table npp-mt-2"><thead><tr><th>NPP</th><th class="npp-text-end">DS kỳ</th></tr></thead>
+                <tbody>${list.map((r) => `<tr><td data-label="NPP">${escapeHtml(r.customer_name)}</td><td data-label="DS" class="npp-text-end">${formatCurrency(r.revenue)}</td></tr>`).join('')}</tbody></table></div>`;
+    } catch (err) { root.innerHTML = `<div class="npp-text-muted">${escapeHtml(err.message)}</div>`; }
 }
 
 function renderGroups(groups) {

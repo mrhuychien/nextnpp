@@ -57,12 +57,8 @@ export async function render({ container }) {
         </div>
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Xu hướng doanh số &amp; sản lượng</h3>
             <div class="npp-chart-wrap"><canvas id="npp-ql-trend"></canvas></div></div>
-        <div class="npp-grid-2 npp-mt-3">
-            <div class="npp-card"><h3 class="npp-font-bold">Cơ cấu nhóm hàng</h3>
-                <div class="npp-chart-wrap"><canvas id="npp-ql-group"></canvas></div></div>
-            <div class="npp-card"><h3 class="npp-font-bold">Doanh số theo tỉnh</h3>
-                <div class="npp-chart-wrap"><canvas id="npp-ql-terr"></canvas></div></div>
-        </div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Cơ cấu nhóm hàng</h3>
+            <div class="npp-chart-wrap"><canvas id="npp-ql-group"></canvas></div></div>
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Top 10 NPP theo doanh số</h3>
             <div class="npp-chart-wrap"><canvas id="npp-ql-top"></canvas></div></div>
 
@@ -75,7 +71,6 @@ export async function render({ container }) {
             <h3 class="npp-font-bold">Danh sách NPP</h3>
             <div class="npp-ql-filters npp-mt-3">
                 <input id="npp-ql-search" class="npp-dh-search" placeholder="Tìm NPP...">
-                <select id="npp-ql-f-terr"><option value="">Tất cả tỉnh</option></select>
                 <select id="npp-ql-f-rank"><option value="">Mọi hạng</option><option value="A">Hạng A</option><option value="B">Hạng B</option><option value="C">Hạng C</option></select>
                 <select id="npp-ql-f-seg"><option value="">Mọi phân khúc</option><option>Mới</option><option>Tăng trưởng</option><option>Ổn định</option><option>Suy giảm</option><option>Ngủ đông</option><option>Mất</option><option>Chưa mua</option></select>
             </div>
@@ -84,7 +79,7 @@ export async function render({ container }) {
     `;
 
     document.getElementById('npp-ql-period').addEventListener('change', (e) => loadData(parseInt(e.target.value, 10) || 3));
-    ['npp-ql-search', 'npp-ql-f-terr', 'npp-ql-f-rank', 'npp-ql-f-seg'].forEach((id) =>
+    ['npp-ql-search', 'npp-ql-f-rank', 'npp-ql-f-seg'].forEach((id) =>
         document.getElementById(id).addEventListener('input', applyFilters));
     await loadData(3);
 }
@@ -98,7 +93,6 @@ async function loadData(months) {
         renderRisk(data.risk || {});
         renderSeg(data.segments || {});
         renderConc(data.concentration || {});
-        fillTerritoryFilter(_rows);
         charts.forEach((c) => c.destroy());
         charts = [];
         renderCharts(Chart, data);
@@ -192,19 +186,6 @@ function renderCharts(Chart, d) {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${formatCurrency(c.parsed)}` } } } },
     }));
 
-    const terrCanvas = document.getElementById('npp-ql-terr');
-    if (d.territory_clean) {
-        const terr = (d.by_territory || []).slice(0, 12);
-        charts.push(new Chart(terrCanvas, {
-            type: 'bar',
-            data: { labels: terr.map((x) => x.territory), datasets: [{ label: 'Doanh số', data: terr.map((x) => x.revenue), backgroundColor: '#8b5cf6' }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => formatCurrency(c.parsed.y) } } }, scales: { y: { ticks: { callback: (v) => formatVNDShort(v) } } } },
-        }));
-    } else {
-        const w = terrCanvas && terrCanvas.closest('.npp-chart-wrap');
-        if (w) w.innerHTML = '<div class="npp-text-muted npp-text-center" style="padding:2rem;">Dữ liệu tỉnh chưa đủ sạch (cần ≥90% NPP có tỉnh). Cập nhật territory hoặc tên NPP để bật biểu đồ.</div>';
-    }
-
     const top = [...(d.customers || [])].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
     charts.push(new Chart(document.getElementById('npp-ql-top'), {
         type: 'bar',
@@ -213,21 +194,12 @@ function renderCharts(Chart, d) {
     }));
 }
 
-function fillTerritoryFilter(rows) {
-    const sel = document.getElementById('npp-ql-f-terr');
-    if (!sel) return;
-    const terrs = [...new Set(rows.map((r) => r.territory).filter(Boolean))].sort();
-    sel.innerHTML = '<option value="">Tất cả tỉnh</option>' + terrs.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-}
-
 function applyFilters() {
     const q = (document.getElementById('npp-ql-search').value || '').toLowerCase().trim();
-    const fTerr = document.getElementById('npp-ql-f-terr').value;
     const fRank = document.getElementById('npp-ql-f-rank').value;
     const fSeg = document.getElementById('npp-ql-f-seg').value;
     let rows = _rows.filter((r) =>
         (!q || (r.customer_name || '').toLowerCase().includes(q) || (r.customer || '').toLowerCase().includes(q)) &&
-        (!fTerr || r.territory === fTerr) &&
         (!fRank || r.rank === fRank) &&
         (!fSeg || r.segment === fSeg));
     rows = rows.sort((a, b) => b.revenue - a.revenue);
