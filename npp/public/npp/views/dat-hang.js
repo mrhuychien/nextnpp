@@ -221,8 +221,8 @@ function calcTotals() {
     for (const [code, q] of Object.entries(QTY)) {
         if (!q) continue;
         const item = itemsCache[code];
-        const price = pricesCache[code];
-        if (!item || !price) continue;
+        if (!item) continue;
+        const price = pricesCache[code] || 0;   // SP 0đ vẫn đặt được — giá cuối do server áp theo bảng giá/KM
         const quycach = parseInt(item[ITEM_FIELDS.quycach], 10) || 1;
         qty += q;
         amount += q * price * quycach;
@@ -244,8 +244,8 @@ function buildRows() {
     for (const [code, q] of Object.entries(QTY)) {
         if (!q) continue;
         const item = itemsCache[code];
-        const price = pricesCache[code];
-        if (!item || !price) continue;
+        if (!item) continue;
+        const price = pricesCache[code] || 0;   // SP 0đ vẫn đặt được — giá cuối do server áp theo bảng giá/KM
         const quycach = parseInt(item[ITEM_FIELDS.quycach], 10) || 1;
         rows.push({ code, name: cleanItemName(item.item_name), qty: q, rate: price * quycach, amount: q * price * quycach });
     }
