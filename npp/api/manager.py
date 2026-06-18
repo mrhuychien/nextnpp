@@ -1073,7 +1073,9 @@ def npp_detail(customer: str, months: int = 12) -> dict:
             "revenue": rev, "qty": flt(r["qty"]),
             "margin_pct": ((rev - cogs) / rev * 100) if rev else None,
             "pct_of_total": (rev / total_rev_sku * 100) if total_rev_sku else 0,
+            "prev_revenue": p, "delta": rev - p,
             "growth_pct": ((rev - p) / p * 100) if p else None})
+    bought_skus = {r["item_code"] for r in cur_sku}
 
     # ── Nhóm hàng ───────────────────────────────────────────────────────
     cur_grp = frappe.db.sql(
@@ -1098,6 +1100,42 @@ def npp_detail(customer: str, months: int = 12) -> dict:
     total_groups = len(chan_groups)
     coverage_pct = (len(bought_groups) / total_groups * 100) if total_groups else 0
     not_bought = [g for g in chan_groups if g not in bought_groups]
+
+    # ── SKU chưa nhập: mã hàng kênh đang bán mà NPP này CHƯA nhập (cơ hội) ──
+    total_npp = len(names)
+    products_not_bought = [
+        {"item_code": r["item_code"], "item_name": r["item_name"], "channel_revenue": flt(r["rev"]),
+         "buyers": int(r["buyers"]), "total_npp": total_npp}
+        for r in frappe.db.sql(
+            "SELECT sii.item_code, sii.item_name, COALESCE(SUM(sii.amount),0) AS rev, "
+            "COUNT(DISTINCT si.customer) AS buyers "
+            "FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name "
+            "WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date>=%s "
+            "AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') "
+            "GROUP BY sii.item_code, sii.item_name ORDER BY rev DESC",
+            (names, add_days(today, -365)), as_dict=True)
+        if r["item_code"] not in bought_skus][:25]
+
+    # ── Lịch thanh toán (hoá đơn còn nợ, theo hạn) + các khoản đã thu ────
+    open_invoices = [
+        {"invoice": r["name"], "posting_date": str(r["posting_date"]),
+         "due_date": str(r["due"]) if r["due"] else None, "grand_total": flt(r["grand_total"]),
+         "outstanding": flt(r["outstanding_amount"]),
+         "days_overdue": max(0, date_diff(today, r["due"])) if r["due"] else 0}
+        for r in frappe.db.sql(
+            "SELECT name, posting_date, COALESCE(due_date,posting_date) AS due, grand_total, outstanding_amount "
+            "FROM `tabSales Invoice` WHERE docstatus=1 AND customer=%s AND outstanding_amount>0 "
+            "ORDER BY due ASC", (customer,), as_dict=True)]
+    payments = []
+    try:
+        payments = [
+            {"name": r["name"], "posting_date": str(r["posting_date"]), "amount": flt(r["paid_amount"])}
+            for r in frappe.get_all(
+                "Payment Entry",
+                filters={"party_type": "Customer", "party": customer, "docstatus": 1, "payment_type": "Receive"},
+                fields=["name", "posting_date", "paid_amount"], order_by="posting_date desc", limit=15)]
+    except Exception:
+        payments = []
 
     # ── Khuyến nghị thị trường ──────────────────────────────────────────
     recs = []
@@ -1158,10 +1196,12 @@ def npp_detail(customer: str, months: int = 12) -> dict:
             "debt": debt, "overdue": overdue, "buckets": buckets, "dso": dso,
             "credit_limit": credit_limit, "credit_usage_pct": credit_usage_pct,
             "revenue": m_rev, "cogs": m_cogs, "gross_profit": m_rev - m_cogs, "margin_pct": margin_pct,
+            "open_invoices": open_invoices, "payments": payments,
         },
         "target": {"monthly_target": monthly_target, "target": target,
                    "attainment_pct": attainment_pct, "expected_pace_pct": pace},
         "products": products[:40],
+        "products_not_bought": products_not_bought,
         "item_groups": {"by_group": by_group, "coverage_pct": coverage_pct,
                         "bought": len(bought_groups), "total_groups": total_groups,
                         "not_bought": not_bought[:12]},

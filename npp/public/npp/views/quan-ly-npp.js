@@ -172,6 +172,28 @@ function renderAll(d) {
                     `<tr><td>${lbl}</td><td class="npp-text-end"><strong style="color:${k === 'over_90' ? 'var(--npp-danger)' : (k === 'current' ? 'var(--npp-success)' : 'var(--npp-text)')};">${formatCurrency((f.buckets || {})[k] || 0)}</strong></td></tr>`).join('')}
             </tbody></table></div>` : ''}
 
+        <!-- Lịch thanh toán & các khoản thu -->
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Lịch thanh toán (hoá đơn còn nợ)</h3>
+            ${(f.open_invoices && f.open_invoices.length) ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                <thead><tr><th>Hoá đơn</th><th>Ngày</th><th>Hạn TT</th><th class="npp-text-end">Còn nợ</th><th class="npp-text-end">Quá hạn</th></tr></thead>
+                <tbody>${f.open_invoices.map((r) => `<tr>
+                    <td data-label="Hoá đơn">${escapeHtml(r.invoice)}</td>
+                    <td data-label="Ngày">${formatDate(r.posting_date)}</td>
+                    <td data-label="Hạn TT">${r.due_date ? formatDate(r.due_date) : '—'}</td>
+                    <td data-label="Còn nợ" class="npp-text-end">${formatCurrency(r.outstanding)}</td>
+                    <td data-label="Quá hạn" class="npp-text-end">${r.days_overdue > 0 ? `<strong style="color:var(--npp-danger);">${r.days_overdue} ngày</strong>` : '<span class="npp-text-muted">trong hạn</span>'}</td>
+                </tr>`).join('')}</tbody></table></div>` : '<p class="npp-text-muted npp-mt-2">🎉 Không còn hoá đơn nợ.</p>'}
+        </div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Các khoản đã thanh toán (gần đây)</h3>
+            ${(f.payments && f.payments.length) ? html`<table class="npp-table npp-mt-2">
+                <thead><tr><th>Phiếu thu</th><th>Ngày</th><th class="npp-text-end">Số tiền</th></tr></thead>
+                <tbody>${f.payments.map((r) => `<tr>
+                    <td data-label="Phiếu thu">${escapeHtml(r.name)}</td>
+                    <td data-label="Ngày">${formatDate(r.posting_date)}</td>
+                    <td data-label="Số tiền" class="npp-text-end" style="color:var(--npp-success);font-weight:700;">${formatCurrency(r.amount)}</td>
+                </tr>`).join('')}</tbody></table>` : '<p class="npp-text-muted npp-mt-2">Chưa ghi nhận khoản thu (Payment Entry) nào.</p>'}
+        </div>
+
         <!-- Nhóm hàng -->
         <h3 class="npp-font-bold npp-mt-3">Nhóm hàng</h3>
         <div class="npp-grid-2">
@@ -185,6 +207,21 @@ function renderAll(d) {
                     ${(g.not_bought || []).map((x) => `<span class="npp-badge npp-badge-warning">${escapeHtml(x)}</span>`).join('')}
                 </div>
             </div>
+        </div>
+
+        <!-- Sản phẩm: đang tăng / đang giảm / chưa nhập -->
+        <div class="npp-grid-2 npp-mt-3">
+            <div class="npp-card"><h3 class="npp-font-bold">📈 Mã hàng đang tăng</h3><div class="npp-mt-2">${moverList(d.products, 'up')}</div></div>
+            <div class="npp-card"><h3 class="npp-font-bold">📉 Mã hàng đang giảm</h3><div class="npp-mt-2">${moverList(d.products, 'down')}</div></div>
+        </div>
+        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">🧩 Mã hàng CHƯA nhập (kênh đang bán) — cơ hội thúc đẩy</h3>
+            ${(d.products_not_bought && d.products_not_bought.length) ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                <thead><tr><th>SKU</th><th class="npp-text-end">Đang bán ở</th><th class="npp-text-end">DS kênh (12T)</th></tr></thead>
+                <tbody>${d.products_not_bought.map((r) => `<tr>
+                    <td data-label="SKU">${escapeHtml(r.item_name)}<div class="npp-text-sm npp-text-muted">${escapeHtml(r.item_code)}</div></td>
+                    <td data-label="Đang bán ở" class="npp-text-end">${r.buyers}/${r.total_npp} NPP</td>
+                    <td data-label="DS kênh" class="npp-text-end">${formatCurrency(r.channel_revenue)}</td>
+                </tr>`).join('')}</tbody></table></div>` : '<p class="npp-text-muted npp-mt-2">🎉 NPP đã nhập mọi mã hàng kênh đang bán.</p>'}
         </div>
 
         <!-- Sản phẩm -->
@@ -204,6 +241,19 @@ function renderAll(d) {
             </table>
         </div>
     `;
+}
+
+function moverList(products, dir) {
+    let rows = (products || []).filter((x) => (dir === 'up' ? x.delta > 0 : x.delta < 0));
+    rows = rows.sort((a, b) => (dir === 'up' ? b.delta - a.delta : a.delta - b.delta)).slice(0, 10);
+    if (!rows.length) return '<div class="npp-text-muted npp-text-sm">Không có</div>';
+    return rows.map((x) => {
+        const up = x.delta >= 0;
+        const pctTxt = x.growth_pct == null ? (x.prev_revenue ? '' : 'mới') : (up ? '▲' : '▼') + Math.abs(x.growth_pct).toFixed(0) + '%';
+        return `<div class="npp-flex npp-justify-between npp-text-sm" style="padding:6px 0;border-bottom:1px solid var(--npp-border);gap:8px;">
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(x.item_name)}</span>
+            <span style="color:${up ? 'var(--npp-success)' : 'var(--npp-danger)'};font-weight:700;white-space:nowrap;">${up ? '+' : ''}${formatVNDShort(x.delta)}${pctTxt ? ' · ' + pctTxt : ''}</span></div>`;
+    }).join('');
 }
 
 function renderTrend(Chart, m) {
