@@ -807,3 +807,45 @@
 @media (min-width: 768px) {
     .npp-chart-wrap { height: 300px; }
 }
+
+/* ─── Công nợ chi tiết view ─── */
+.npp-cn-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.5rem; }
+@media (max-width: 820px) { .npp-cn-summary { grid-template-columns: 1fr; } }
+.npp-cn-card { background: var(--npp-surface); border: 1px solid var(--npp-border); border-top: 3px solid var(--npp-border); border-radius: var(--npp-radius, 16px); padding: 1.1rem 1.25rem; box-shadow: var(--npp-shadow-sm, 0 1px 2px rgba(0,0,0,.04)); }
+.npp-cn-card.balance { border-top-color: var(--npp-primary, #3b82f6); }
+.npp-cn-card.due { border-top-color: var(--npp-success); cursor: pointer; }
+.npp-cn-card.overdue { border-top-color: var(--npp-warning); cursor: pointer; }
+.npp-cn-card.due:hover, .npp-cn-card.overdue:hover { box-shadow: var(--npp-shadow-md, 0 4px 12px rgba(0,0,0,.06)); transform: translateY(-2px); transition: all .2s; }
+.npp-cn-card-label { font-size: .72rem; font-weight: 700; color: var(--npp-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.npp-cn-card-value { font-size: 1.5rem; font-weight: 800; margin-top: .35rem; color: var(--npp-text); }
+.npp-cn-card-sub { font-size: .78rem; color: var(--npp-text-muted); margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--npp-border); }
+
+.npp-cn-tet-card { background: linear-gradient(135deg, #fef2f2 0%, #fff5f5 50%, #fffbeb 100%); border: 2px solid #fecaca; border-radius: var(--npp-radius, 16px); padding: 1.25rem; cursor: pointer; }
+.npp-cn-tet-card:hover { box-shadow: 0 8px 24px rgba(220,38,38,.15); transform: translateY(-2px); transition: all .2s; }
+.npp-cn-tet-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+@media (max-width: 640px) { .npp-cn-tet-stats { grid-template-columns: 1fr; } }
+.npp-cn-tet-stats > div { background: rgba(255,255,255,.7); border: 1px solid rgba(220,38,38,.1); border-radius: 12px; padding: .8rem; text-align: center; }
+.npp-cn-tet-stats > div.hl { background: linear-gradient(135deg, #dc2626, #b91c1c); border: none; }
+.npp-cn-tet-l { font-size: .68rem; font-weight: 700; color: #991b1b; text-transform: uppercase; letter-spacing: .03em; }
+.npp-cn-tet-stats > div.hl .npp-cn-tet-l { color: rgba(255,255,255,.85); }
+.npp-cn-tet-v { font-size: 1.1rem; font-weight: 800; color: #7f1d1d; margin-top: .25rem; }
+.npp-cn-tet-stats > div.hl .npp-cn-tet-v { color: #fff; }
+
+.npp-cn-sched { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 640px) { .npp-cn-sched { grid-template-columns: 1fr; } }
+.npp-cn-sch-card { border-radius: 14px; padding: 1.1rem; cursor: pointer; }
+.npp-cn-sch-card:hover { box-shadow: var(--npp-shadow-md, 0 4px 12px rgba(0,0,0,.06)); transform: translateY(-2px); transition: all .2s; }
+.npp-cn-sch-card.day5 { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; }
+.npp-cn-sch-card.day20 { background: linear-gradient(135deg, #dbeafe, #bfdbfe); color: #1e40af; }
+.npp-cn-sch-day { width: 44px; height: 44px; background: #fff; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; font-weight: 800; }
+.npp-cn-sch-card.day5 .npp-cn-sch-day { color: #d97706; }
+.npp-cn-sch-card.day20 .npp-cn-sch-day { color: #1d4ed8; }
+.npp-cn-sch-date { font-size: .85rem; font-weight: 700; }
+.npp-cn-sch-amt { font-size: 1.4rem; font-weight: 800; }
+
+.npp-cn-flabel { display: block; font-size: .68rem; font-weight: 700; color: var(--npp-text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: .3rem; }
+.npp-cn-input { padding: .55rem .8rem; border: 1.5px solid var(--npp-border); border-radius: 10px; background: var(--npp-surface); color: var(--npp-text); font-weight: 600; font-size: .85rem; }
+.npp-cn-btn { padding: .6rem 1rem; border: 1px solid var(--npp-border); border-radius: 10px; background: var(--npp-surface-2); color: var(--npp-text); font-weight: 700; font-size: .82rem; cursor: pointer; }
+.npp-cn-btn:hover { background: var(--npp-border); }
+.npp-cn-invrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--npp-surface-2); border: 1px solid var(--npp-border); border-radius: 12px; padding: .8rem 1rem; margin-bottom: .6rem; cursor: pointer; }
+.npp-cn-invrow:hover { border-color: var(--npp-primary, #3b82f6); }

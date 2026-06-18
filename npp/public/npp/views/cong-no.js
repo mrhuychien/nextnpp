@@ -5,194 +5,347 @@ import { banner } from '../components/banner.js';
 import { emptyState } from '../components/empty-state.js';
 import { showModal } from '../components/modal.js';
 
-let _due = null;   // payload payment_due — dùng lại cho modal chi tiết
+let _data = null;     // payload ledger_detail
+let _ledger = [];     // toàn bộ GL entries (lọc client-side)
+
+function isoOffset(months) {
+    const d = new Date();
+    if (months) d.setMonth(d.getMonth() + months);
+    return d.toISOString().split('T')[0];
+}
 
 export async function render({ container }) {
     container.innerHTML = html`
-        ${banner({ title: 'Công nợ', subtitle: 'Tổng quan dư nợ với Hoàng Giang' })}
-        <div id="npp-cn-policy"><div class="npp-skeleton" style="height:72px;"></div></div>
-        <div class="npp-kpi-grid" id="npp-cn-kpis">
-            <div class="npp-skeleton" style="height:96px;"></div>
-            <div class="npp-skeleton" style="height:96px;"></div>
+        ${banner({ title: 'Công nợ chi tiết', subtitle: 'Sổ công nợ, lịch thanh toán & chi tiết giao dịch' })}
+        <div id="npp-cn-policy"></div>
+        <div class="npp-cn-summary" id="npp-cn-summary">
+            ${'<div class="npp-skeleton" style="height:120px;"></div>'.repeat(3)}
         </div>
-        <div class="npp-card npp-mt-3" id="npp-aging">
-            <h3 class="npp-font-bold">Phân loại theo tuổi nợ</h3>
-            <div class="npp-skeleton" style="height:150px;margin-top:0.5rem;"></div>
+        <div id="npp-cn-tet" class="npp-mt-3"></div>
+        <div class="npp-card npp-mt-3">
+            <h3 class="npp-font-bold">📅 Lịch thanh toán</h3>
+            <div class="npp-cn-sched npp-mt-2" id="npp-cn-sched">
+                <div class="npp-skeleton" style="height:120px;"></div><div class="npp-skeleton" style="height:120px;"></div>
+            </div>
         </div>
-        <div class="npp-card npp-mt-3" id="npp-overdue">
-            <h3 class="npp-font-bold">Hóa đơn quá hạn</h3>
-            <div class="npp-skeleton" style="height:160px;margin-top:0.5rem;"></div>
+        <div class="npp-card npp-mt-3">
+            <div class="npp-ql-filters">
+                <div><label class="npp-cn-flabel">Từ ngày</label><input type="date" id="npp-cn-from" class="npp-cn-input"></div>
+                <div><label class="npp-cn-flabel">Đến ngày</label><input type="date" id="npp-cn-to" class="npp-cn-input"></div>
+                <div><label class="npp-cn-flabel">Loại chứng từ</label>
+                    <select id="npp-cn-type" class="npp-cn-input">
+                        <option value="">Tất cả loại</option>
+                        <option value="Sales Invoice">Hóa đơn bán hàng</option>
+                        <option value="Payment Entry">Thanh toán</option>
+                        <option value="Journal Entry">Bút toán</option>
+                    </select>
+                </div>
+                <div class="npp-flex" style="gap:8px;align-items:flex-end;">
+                    <button id="npp-cn-reset" class="npp-cn-btn" type="button">Đặt lại</button>
+                    <button id="npp-cn-export" class="npp-cn-btn" type="button">⬇ Xuất CSV</button>
+                </div>
+            </div>
+        </div>
+        <div class="npp-card npp-mt-3">
+            <h3 class="npp-font-bold">Chi tiết giao dịch</h3>
+            <div id="npp-cn-table" class="npp-mt-2"><div class="npp-skeleton" style="height:240px;"></div></div>
         </div>
     `;
+
+    document.getElementById('npp-cn-from').value = isoOffset(-3);
+    document.getElementById('npp-cn-to').value = isoOffset(0);
+    ['npp-cn-from', 'npp-cn-to', 'npp-cn-type'].forEach((id) =>
+        document.getElementById(id).addEventListener('input', applyFilter));
+    document.getElementById('npp-cn-reset').addEventListener('click', () => {
+        document.getElementById('npp-cn-from').value = isoOffset(-3);
+        document.getElementById('npp-cn-to').value = isoOffset(0);
+        document.getElementById('npp-cn-type').value = '';
+        applyFilter();
+    });
+    document.getElementById('npp-cn-export').addEventListener('click', exportCSV);
 
     try {
-        // payment_due: tính server-side, CHỈ cho NPP đang đăng nhập (require_customer).
-        const [summary, aging, due] = await Promise.all([
-            api.cached.outstanding(),
-            api.aging(),
-            api.call('npp.api.outstanding.payment_due'),
-        ]);
-        _due = due;
-        renderPolicy(due);
-        renderKpis(summary, due);
-        renderAging(aging);
-        renderOverdue(summary?.overdue_invoices || []);
+        _data = await api.call('npp.api.outstanding.ledger_detail');
+        _ledger = _data.ledger || [];
+        renderPolicy(_data);
+        renderSummary(_data);
+        renderTet(_data.tet || {});
+        renderSchedule(_data.schedule || {});
+        applyFilter();
     } catch (err) {
-        document.getElementById('npp-cn-kpis')?.remove();
-        document.getElementById('npp-cn-policy').innerHTML =
-            `<div class="npp-empty"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
+        document.getElementById('npp-cn-summary').innerHTML =
+            `<div class="npp-empty" style="grid-column:1/-1;"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
+        document.getElementById('npp-cn-table').innerHTML = '';
     }
 }
 
-function renderPolicy(due) {
+// ─── Banner chính sách ────────────────────────────────────────────────────
+function renderPolicy(d) {
     const root = document.getElementById('npp-cn-policy');
-    if (!root) return;
-    if (due?.policy === 'tet') {
-        root.innerHTML = html`
-            <div class="npp-policy-card tet">
-                <div class="npp-policy-icon">🧧</div>
-                <div>
-                    <h4>Chính sách Tết (từ 01/11/${due.tet_year})</h4>
-                    <p>Được nợ tối đa <strong>50%</strong> tổng hóa đơn từ 01/11. Phần vượt quá phải thanh toán ngay.</p>
-                </div>
-            </div>`;
-    } else {
-        const next = due?.next_payment ? ` Kỳ kế tiếp: <strong>${formatDate(due.next_payment)}</strong>.` : '';
-        root.innerHTML = html`
-            <div class="npp-policy-card normal">
-                <div class="npp-policy-icon">📅</div>
-                <div>
-                    <h4>Chính sách thường</h4>
-                    <p>Hóa đơn quá <strong>30 ngày</strong> kể từ ngày phát hành cần thanh toán.${next}</p>
-                </div>
-            </div>`;
+    let h = html`<div class="npp-policy-card normal"><div class="npp-policy-icon">📅</div>
+        <div><h4>Chính sách thanh toán</h4><p>Thanh toán vào ngày <strong>5</strong> và <strong>20</strong> hàng tháng cho hóa đơn đến hạn 30 ngày.</p></div></div>`;
+    if (d.tet && d.tet.active) {
+        h += html`<div class="npp-policy-card tet npp-mt-2"><div class="npp-policy-icon">🧧</div>
+            <div><h4>Chính sách Tết ${d.tet.year}</h4><p>Đơn hàng từ <strong>01/11/${d.tet.year}</strong> được nợ tối đa <strong>50%</strong> tổng giá trị; phần vượt phải thanh toán.</p></div></div>`;
+    }
+    root.innerHTML = h;
+}
+
+// ─── 3 thẻ tóm tắt ────────────────────────────────────────────────────────
+function renderSummary(d) {
+    const s = d.summary || {};
+    document.getElementById('npp-cn-summary').innerHTML = html`
+        <div class="npp-cn-card balance">
+            <div class="npp-cn-card-label">💰 Công nợ hiện tại</div>
+            <div class="npp-cn-card-value">${formatCurrency(d.current_balance || 0)}</div>
+            <div class="npp-cn-card-sub">${d.transaction_count || 0} giao dịch</div>
+        </div>
+        <div class="npp-cn-card due" id="npp-cn-card-due" role="button" tabindex="0">
+            <div class="npp-cn-card-label">✅ HĐ trong hạn thanh toán</div>
+            <div class="npp-cn-card-value">${formatCurrency(s.in_term_amount || 0)}</div>
+            <div class="npp-cn-card-sub">${s.in_term_count || 0} hóa đơn · Xem chi tiết →</div>
+        </div>
+        <div class="npp-cn-card overdue" id="npp-cn-card-need" role="button" tabindex="0">
+            <div class="npp-cn-card-label">🚨 HĐ cần thanh toán</div>
+            <div class="npp-cn-card-value">${formatCurrency(s.need_to_pay_amount || 0)}</div>
+            <div class="npp-cn-card-sub">${s.need_to_pay_count || 0} hóa đơn · Xem chi tiết →</div>
+        </div>
+    `;
+    document.getElementById('npp-cn-card-due').addEventListener('click', () =>
+        invoiceListModal('✅ Hóa đơn trong hạn thanh toán', s.in_term_invoices || [], s.in_term_amount || 0, 'var(--npp-success)'));
+    document.getElementById('npp-cn-card-need').addEventListener('click', () =>
+        invoiceListModal('🚨 Hóa đơn cần thanh toán', s.need_to_pay_invoices || [], s.need_to_pay_amount || 0, 'var(--npp-warning)'));
+}
+
+// ─── Thẻ Tết ──────────────────────────────────────────────────────────────
+function renderTet(tet) {
+    const root = document.getElementById('npp-cn-tet');
+    if (!tet.active) { root.innerHTML = ''; return; }
+    root.innerHTML = html`
+        <div class="npp-cn-tet-card" id="npp-cn-tet-card" role="button" tabindex="0">
+            <div class="npp-flex npp-items-center" style="gap:10px;">
+                <span style="font-size:1.6rem;">🧧</span>
+                <div><strong style="color:#991b1b;">Chính sách Tết ${tet.year}</strong>
+                    <div class="npp-text-sm" style="color:#b91c1c;">Thanh toán 50% đơn hàng từ 01/11/${tet.year}</div></div>
+            </div>
+            <div class="npp-cn-tet-stats npp-mt-3">
+                <div><div class="npp-cn-tet-l">Đơn hàng Tết</div><div class="npp-cn-tet-v">${tet.count} đơn</div></div>
+                <div><div class="npp-cn-tet-l">Tổng giá trị HĐ</div><div class="npp-cn-tet-v">${formatCurrency(tet.total_amount)}</div></div>
+                <div class="hl"><div class="npp-cn-tet-l">Cần thanh toán thêm</div><div class="npp-cn-tet-v">${formatCurrency(tet.payment50)}</div></div>
+            </div>
+            <div class="npp-text-sm npp-mt-2" style="text-align:right;color:#dc2626;font-weight:600;">Xem chi tiết →</div>
+        </div>
+    `;
+    document.getElementById('npp-cn-tet-card').addEventListener('click', () => tetModal(tet));
+}
+
+function tetModal(tet) {
+    const note = tet.payment50 > 0
+        ? `<div class="npp-policy-card" style="border-left-color:var(--npp-warning);margin-top:0;"><div class="npp-policy-icon">🧮</div><div><p>Công thức: ${formatCurrency(tet.current_balance)} − 50% × ${formatCurrency(tet.total_amount)} = <strong>${formatCurrency(tet.payment50)}</strong></p></div></div>`
+        : `<div class="npp-policy-card" style="border-left-color:var(--npp-success);margin-top:0;"><div class="npp-policy-icon">✅</div><div><p>Công nợ hiện tại (${formatCurrency(tet.current_balance)}) ≤ 50% tổng HĐ Tết (${formatCurrency(tet.half)}). Không cần thanh toán thêm.</p></div></div>`;
+    const body = html`
+        ${note}
+        <div class="npp-kpi-grid npp-mt-3">
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Số đơn Tết</div><div class="npp-kpi-value">${tet.count}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Tổng giá trị HĐ</div><div class="npp-kpi-value">${formatCurrency(tet.total_amount)}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Công nợ hiện tại</div><div class="npp-kpi-value">${formatCurrency(tet.current_balance)}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Cần thanh toán thêm</div><div class="npp-kpi-value warning">${formatCurrency(tet.payment50)}</div></div>
+        </div>
+        <div class="npp-text-sm npp-text-muted npp-mt-3">Hóa đơn Tết (${tet.count}):</div>
+        <div class="npp-mt-2">${(tet.invoices || []).map(invoiceRow).join('') || emptyState({ icon: '✅', title: 'Không có' })}</div>
+    `;
+    showModal({ title: `🧧 Chính sách Tết ${tet.year}`, body });
+    bindInvoiceRows();
+}
+
+// ─── Lịch thanh toán ──────────────────────────────────────────────────────
+function renderSchedule(sch) {
+    const d5 = sch.day5 || { total: 0, invoices: [], date: null };
+    const d20 = sch.day20 || { total: 0, invoices: [], date: null };
+    document.getElementById('npp-cn-sched').innerHTML = html`
+        <div class="npp-cn-sch-card day5" id="npp-cn-sch5" role="button" tabindex="0">
+            <div class="npp-flex npp-items-center" style="gap:10px;"><div class="npp-cn-sch-day">5</div>
+                <div><div class="npp-cn-sch-date">${d5.date ? formatDate(d5.date) : '—'}</div><div class="npp-text-sm" style="opacity:.7;">Kỳ thanh toán</div></div></div>
+            <div class="npp-cn-sch-amt npp-mt-2">${formatCurrency(d5.total)}</div>
+            <div class="npp-text-sm">${(d5.invoices || []).length} hóa đơn · Xem chi tiết →</div>
+        </div>
+        <div class="npp-cn-sch-card day20" id="npp-cn-sch20" role="button" tabindex="0">
+            <div class="npp-flex npp-items-center" style="gap:10px;"><div class="npp-cn-sch-day">20</div>
+                <div><div class="npp-cn-sch-date">${d20.date ? formatDate(d20.date) : '—'}</div><div class="npp-text-sm" style="opacity:.7;">Kỳ thanh toán</div></div></div>
+            <div class="npp-cn-sch-amt npp-mt-2">${formatCurrency(d20.total)}</div>
+            <div class="npp-text-sm">${(d20.invoices || []).length} hóa đơn · Xem chi tiết →</div>
+        </div>
+    `;
+    document.getElementById('npp-cn-sch5').addEventListener('click', () =>
+        invoiceListModal(`📅 Thanh toán ngày 5 (${d5.date ? formatDate(d5.date) : ''})`, d5.invoices || [], d5.total, 'var(--npp-warning)'));
+    document.getElementById('npp-cn-sch20').addEventListener('click', () =>
+        invoiceListModal(`📅 Thanh toán ngày 20 (${d20.date ? formatDate(d20.date) : ''})`, d20.invoices || [], d20.total, 'var(--npp-primary, #3b82f6)'));
+}
+
+// ─── Modal: danh sách hóa đơn ─────────────────────────────────────────────
+function invoiceRow(inv) {
+    const diff = inv.days_diff;
+    const txt = diff < 0 ? `Quá hạn ${Math.abs(diff)} ngày` : (diff === 0 ? 'Hôm nay' : `Còn ${diff} ngày`);
+    const color = diff < 0 ? 'var(--npp-danger)' : (diff === 0 ? 'var(--npp-warning)' : 'var(--npp-success)');
+    return `<div class="npp-cn-invrow" data-name="${escapeHtml(inv.name)}">
+        <div><strong style="color:var(--npp-primary, #3b82f6);">${escapeHtml(inv.name)}</strong>
+            <div class="npp-text-sm npp-text-muted">HĐ ${formatDate(inv.posting_date)} · Hạn ${formatDate(inv.due_date)}</div></div>
+        <div style="text-align:right;"><strong>${formatCurrency(inv.outstanding_amount)}</strong>
+            <div class="npp-text-sm" style="color:${color};">${txt}</div></div>
+    </div>`;
+}
+
+function bindInvoiceRows() {
+    document.querySelectorAll('#npp-modal-mount .npp-cn-invrow').forEach((el) =>
+        el.addEventListener('click', () => showVoucher('Sales Invoice', el.dataset.name)));
+}
+
+function invoiceListModal(title, invoices, total, color) {
+    const body = html`
+        <div class="npp-card" style="margin-top:0;"><div class="npp-flex npp-justify-between">
+            <span>Tổng cộng (${invoices.length} hóa đơn)</span>
+            <strong style="font-size:1.15rem;color:${color};">${formatCurrency(total)}</strong></div></div>
+        <div class="npp-mt-3">${invoices.map(invoiceRow).join('') || emptyState({ icon: '✅', title: 'Không có hóa đơn' })}</div>
+    `;
+    showModal({ title, body });
+    bindInvoiceRows();
+}
+
+// ─── Bộ lọc + bảng giao dịch ──────────────────────────────────────────────
+function applyFilter() {
+    const from = document.getElementById('npp-cn-from')?.value || '';
+    const to = document.getElementById('npp-cn-to')?.value || '';
+    const type = document.getElementById('npp-cn-type')?.value || '';
+    const rows = _ledger.filter((e) =>
+        (!from || e.posting_date >= from) && (!to || e.posting_date <= to) && (!type || e.voucher_type === type));
+    renderTable(rows);
+}
+
+function vBadge(t) {
+    const m = { 'Sales Invoice': ['primary', '🧾 Hóa đơn'], 'Payment Entry': ['success', '💳 Thanh toán'], 'Journal Entry': ['warning', '📝 Bút toán'] };
+    const [c, l] = m[t] || ['muted', t || '—'];
+    return `<span class="npp-badge npp-badge-${c}">${l}</span>`;
+}
+
+function renderTable(rows) {
+    const wrap = document.getElementById('npp-cn-table');
+    if (!wrap) return;
+    if (!rows.length) { wrap.innerHTML = emptyState({ icon: '📭', title: 'Không có giao dịch', message: 'Thử mở rộng khoảng ngày.' }); return; }
+    wrap.innerHTML = `<div style="overflow-x:auto;"><table class="npp-table">
+        <thead><tr><th>Ngày</th><th>Loại</th><th>Số CT</th><th>Tài khoản</th><th class="npp-text-end">Nợ</th><th class="npp-text-end">Có</th><th class="npp-text-end">Số dư</th><th>Ghi chú</th></tr></thead>
+        <tbody>${rows.map((e) => `<tr class="npp-cn-row" data-vt="${escapeHtml(e.voucher_type)}" data-vn="${escapeHtml(e.voucher_no)}" style="cursor:pointer;">
+            <td data-label="Ngày" style="white-space:nowrap;">${formatDate(e.posting_date)}</td>
+            <td data-label="Loại">${vBadge(e.voucher_type)}</td>
+            <td data-label="Số CT"><span style="color:var(--npp-primary, #3b82f6);font-weight:600;">${escapeHtml(e.voucher_no)}</span></td>
+            <td data-label="Tài khoản">${escapeHtml((e.account || '').split(' - ')[0] || '—')}</td>
+            <td data-label="Nợ" class="npp-text-end" style="${e.debit > 0 ? 'color:var(--npp-danger);font-weight:700;' : ''}">${e.debit > 0 ? formatCurrency(e.debit) : '—'}</td>
+            <td data-label="Có" class="npp-text-end" style="${e.credit > 0 ? 'color:var(--npp-success);font-weight:700;' : ''}">${e.credit > 0 ? formatCurrency(e.credit) : '—'}</td>
+            <td data-label="Số dư" class="npp-text-end"><strong>${formatCurrency(e.running_balance)}</strong></td>
+            <td data-label="Ghi chú" class="npp-text-sm npp-text-muted" style="max-width:220px;">${escapeHtml(e.remarks || '—')}</td>
+        </tr>`).join('')}</tbody></table></div>
+        <div class="npp-text-sm npp-text-muted npp-mt-2">Hiển thị ${rows.length} giao dịch</div>`;
+    wrap.querySelectorAll('.npp-cn-row').forEach((tr) => tr.addEventListener('click', () => showVoucher(tr.dataset.vt, tr.dataset.vn)));
+}
+
+// ─── Modal chi tiết chứng từ ──────────────────────────────────────────────
+async function showVoucher(vt, vn) {
+    showModal({ title: `📄 ${escapeHtml(vn)}`, body: '<div class="npp-skeleton" style="height:220px;"></div>' });
+    try {
+        const d = await api.call('npp.api.outstanding.voucher_detail', { voucher_type: vt, voucher_no: vn });
+        if (d.voucher_type === 'Sales Invoice') invoiceModal(d);
+        else if (d.voucher_type === 'Payment Entry') paymentModal(d);
+        else genericModal(d);
+    } catch (err) {
+        showModal({ title: '⚠️ Lỗi', body: `<div class="npp-empty"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>` });
     }
 }
 
-function renderKpis(summary, due) {
-    const root = document.getElementById('npp-cn-kpis');
-    if (!root) return;
-    const total = summary?.total || 0;
-    const required = due?.required_payment || 0;
-    const sub = due?.policy === 'tet'
-        ? `50% được nợ: ${formatCurrency(due.tet_allowed_debt || 0)}`
-        : `${(due?.details || []).length} HĐ quá hạn`;
-    root.innerHTML = html`
-        <div class="npp-kpi-card">
-            <div class="npp-kpi-label">Tổng công nợ</div>
-            <div class="npp-kpi-value">${formatCurrency(total)}</div>
-            <div class="npp-kpi-sub">${summary?.invoice_count || 0} hóa đơn chưa TT</div>
-        </div>
-        <div class="npp-kpi-card">
-            <div class="npp-kpi-label">Cần thanh toán</div>
-            <div class="npp-kpi-value warning">
-                ${required > 0
-                    ? `<button class="npp-cn-clickable" id="npp-cn-due-btn">${formatCurrency(required)}</button>`
-                    : formatCurrency(0)}
-            </div>
-            <div class="npp-kpi-sub">${escapeHtml(sub)}</div>
-        </div>
-    `;
-    document.getElementById('npp-cn-due-btn')?.addEventListener('click', showDueDetail);
+function attHtml(atts) {
+    if (!atts || !atts.length) return '<div class="npp-text-muted npp-text-sm">Không có file đính kèm</div>';
+    const base = window.NPP_CONTEXT?.baseUrl || '';
+    return `<div class="npp-flex npp-flex-wrap" style="gap:8px;">${atts.map((a) => {
+        let url = a.file_url || '';
+        if (url && !/^https?:/i.test(url)) url = base + url;
+        const name = a.file_name || url.split('/').pop();
+        const isImg = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name || '');
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="npp-badge npp-badge-muted" style="text-decoration:none;">${isImg ? '🖼️' : '📎'} ${escapeHtml(name)}</a>`;
+    }).join('')}</div>`;
 }
 
-function showDueDetail() {
-    const due = _due;
-    if (!due) return;
-    const details = due.details || [];
-    let body;
-
-    if (due.policy === 'tet') {
-        body = html`
-            <div class="npp-policy-card tet" style="margin-top:0;">
-                <div class="npp-policy-icon">🧧</div>
-                <div><h4>Công thức</h4><p>Cần TT = Công nợ − 50% tổng HĐ từ 01/11/${due.tet_year}</p></div>
-            </div>
-            <div class="npp-kpi-grid">
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Công nợ hiện tại</div><div class="npp-kpi-value">${formatCurrency(due.current_debt)}</div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Tổng HĐ từ 01/11</div><div class="npp-kpi-value">${formatCurrency(due.tet_invoice_total)}</div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">50% được nợ</div><div class="npp-kpi-value">${formatCurrency(due.tet_allowed_debt)}</div></div>
-                <div class="npp-kpi-card"><div class="npp-kpi-label">Cần thanh toán</div><div class="npp-kpi-value warning">${formatCurrency(due.required_payment)}</div></div>
-            </div>
-            <div class="npp-text-sm npp-text-muted npp-mt-3">Hóa đơn từ 01/11 (${details.length}):</div>
-            <table class="npp-table npp-mt-2">
-                <thead><tr><th>Hóa đơn</th><th>Ngày</th><th class="npp-text-end">Giá trị</th><th class="npp-text-end">50% được nợ</th></tr></thead>
-                <tbody>
-                    ${details.map((d) => html`<tr>
-                        <td data-label="Hóa đơn">${escapeHtml(d.name)}</td>
-                        <td data-label="Ngày">${formatDate(d.posting_date)}</td>
-                        <td data-label="Giá trị" class="npp-text-end">${formatCurrency(d.grand_total)}</td>
-                        <td data-label="50% được nợ" class="npp-text-end">${formatCurrency(d.allowed_debt)}</td>
-                    </tr>`).join('') || '<tr><td colspan="4" class="npp-text-center npp-text-muted">Không có hóa đơn</td></tr>'}
-                </tbody>
-            </table>
-        `;
-    } else {
-        body = html`
-            <div class="npp-policy-card normal" style="margin-top:0;">
-                <div class="npp-policy-icon">📅</div>
-                <div><h4>Hóa đơn quá 30 ngày</h4><p>Các hóa đơn đã quá 30 ngày kể từ ngày phát hành.</p></div>
-            </div>
-            <div class="npp-text-sm npp-text-muted npp-mt-3">Chi tiết (${details.length}):</div>
-            <table class="npp-table npp-mt-2">
-                <thead><tr><th>Hóa đơn</th><th>Ngày</th><th class="npp-text-end">Còn nợ</th><th class="npp-text-end">Quá hạn</th></tr></thead>
-                <tbody>
-                    ${details.map((d) => html`<tr>
-                        <td data-label="Hóa đơn">${escapeHtml(d.name)}</td>
-                        <td data-label="Ngày">${formatDate(d.posting_date)}</td>
-                        <td data-label="Còn nợ" class="npp-text-end">${formatCurrency(d.balance)}</td>
-                        <td data-label="Quá hạn" class="npp-text-end">${d.days_overdue} ngày</td>
-                    </tr>`).join('') || '<tr><td colspan="4" class="npp-text-center npp-text-muted">Không có hóa đơn quá hạn</td></tr>'}
-                </tbody>
-            </table>
-        `;
-    }
-    showModal({ title: 'Chi tiết cần thanh toán', body });
+function invoiceModal(d) {
+    const inv = d.invoice || {};
+    const items = d.items || [];
+    const itemsHtml = items.length ? `<div style="overflow-x:auto;"><table class="npp-table">
+        <thead><tr><th>Sản phẩm</th><th class="npp-text-center">SL</th><th class="npp-text-end">Đơn giá</th><th class="npp-text-end">Thành tiền</th></tr></thead>
+        <tbody>${items.map((it) => `<tr><td data-label="SP">${escapeHtml(it.item_name || it.item_code)}</td><td data-label="SL" class="npp-text-center">${it.qty} ${escapeHtml(it.uom || '')}</td><td data-label="Đơn giá" class="npp-text-end">${formatCurrency(it.rate)}</td><td data-label="TT" class="npp-text-end">${formatCurrency(it.amount)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<div class="npp-text-muted npp-text-sm">Không có dòng hàng</div>';
+    const taxHtml = (d.taxes || []).map((t) => `<div class="npp-flex npp-justify-between npp-text-sm" style="padding:4px 0;"><span>${escapeHtml((t.description || t.account_head || 'Thuế').replace(/\s*-?\s*\d+(\.\d+)?%/g, '').trim())}</span><span>${formatCurrency(t.tax_amount)}</span></div>`).join('');
+    const body = html`
+        <div class="npp-kpi-grid">
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Ngày HĐ</div><div class="npp-kpi-value" style="font-size:1rem;">${formatDate(inv.posting_date)}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Hạn TT</div><div class="npp-kpi-value" style="font-size:1rem;">${inv.due_date ? formatDate(inv.due_date) : '—'}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Trạng thái</div><div class="npp-kpi-value" style="font-size:1rem;">${escapeHtml(inv.status || '—')}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Còn nợ</div><div class="npp-kpi-value danger" style="font-size:1rem;">${formatCurrency(inv.outstanding_amount)}</div></div>
+        </div>
+        <h4 class="npp-font-bold npp-mt-3">Chi tiết sản phẩm</h4><div class="npp-mt-2">${itemsHtml}</div>
+        <div class="npp-card npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-text-sm" style="padding:4px 0;"><span>Tổng tiền hàng</span><span>${formatCurrency(inv.net_total)}</span></div>
+            ${taxHtml}
+            ${inv.discount_amount > 0 ? `<div class="npp-flex npp-justify-between npp-text-sm" style="padding:4px 0;"><span>Chiết khấu</span><span style="color:var(--npp-success);">-${formatCurrency(inv.discount_amount)}</span></div>` : ''}
+            <div class="npp-flex npp-justify-between" style="padding-top:8px;margin-top:6px;border-top:1px solid var(--npp-border);"><strong>Tổng cộng</strong><strong style="color:var(--npp-primary, #3b82f6);font-size:1.15rem;">${formatCurrency(inv.grand_total)}</strong></div>
+        </div>
+        <h4 class="npp-font-bold npp-mt-3">File đính kèm (${(d.attachments || []).length})</h4><div class="npp-mt-2">${attHtml(d.attachments)}</div>
+    `;
+    showModal({ title: `🧾 ${escapeHtml(inv.name || '')}`, body });
 }
 
-function renderAging(a) {
-    const root = document.getElementById('npp-aging');
-    if (!a) return root.innerHTML = '<h3 class="npp-font-bold">Phân loại theo tuổi nợ</h3>' + emptyState({ icon: '📊', title: 'Không có dữ liệu' });
-    const buckets = [
-        { label: '0-30 ngày',   value: a['0_30']   || 0, color: 'var(--npp-success)' },
-        { label: '31-60 ngày',  value: a['31_60']  || 0, color: 'var(--npp-warning)' },
-        { label: '61-90 ngày',  value: a['61_90']  || 0, color: '#f97316' },
-        { label: '90+ ngày',    value: a['over_90']|| 0, color: 'var(--npp-danger)'  },
-    ];
-    const total = buckets.reduce((s, b) => s + b.value, 0) || 1;
-    root.innerHTML = html`
-        <h3 class="npp-font-bold">Phân loại theo tuổi nợ</h3>
-        <div class="npp-aging-list npp-mt-3">
-            ${buckets.map((b) => html`
-                <div class="npp-aging-row">
-                    <div class="npp-flex npp-justify-between npp-text-sm">
-                        <span>${b.label}</span><strong>${formatCurrency(b.value)}</strong>
-                    </div>
-                    <div class="npp-aging-bar"><div style="width:${(b.value / total * 100).toFixed(1)}%;background:${b.color};"></div></div>
-                </div>
-            `).join('')}
-        </div>
-    `;
+function glRows(gl) {
+    if (!gl || !gl.length) return '<div class="npp-text-muted npp-text-sm">Không có giao dịch kế toán</div>';
+    return `<div style="overflow-x:auto;"><table class="npp-table"><thead><tr><th>Ngày</th><th>Tài khoản</th><th class="npp-text-end">Nợ</th><th class="npp-text-end">Có</th></tr></thead>
+        <tbody>${gl.map((g) => `<tr><td data-label="Ngày">${formatDate(g.posting_date)}</td><td data-label="TK">${escapeHtml((g.account || '').split(' - ')[0] || '—')}</td><td data-label="Nợ" class="npp-text-end">${g.debit > 0 ? formatCurrency(g.debit) : '—'}</td><td data-label="Có" class="npp-text-end">${g.credit > 0 ? formatCurrency(g.credit) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
-function renderOverdue(list) {
-    const root = document.getElementById('npp-overdue');
-    if (!list.length) {
-        root.innerHTML = '<h3 class="npp-font-bold">Hóa đơn quá hạn</h3>' + emptyState({ icon: '✅', title: 'Không có hóa đơn quá hạn' });
-        return;
-    }
-    root.innerHTML = html`
-        <h3 class="npp-font-bold">Hóa đơn quá hạn (${list.length})</h3>
-        <div class="npp-mt-3">
-            ${list.map((inv) => html`
-                <a href="#/don-hang/${encodeURIComponent(inv.name)}" class="npp-card npp-order-card">
-                    <div class="npp-flex npp-justify-between"><strong>${escapeHtml(inv.name)}</strong><span class="npp-badge npp-badge-danger">${inv.days_overdue} ngày</span></div>
-                    <div class="npp-flex npp-justify-between npp-mt-2 npp-text-sm">
-                        <span class="npp-text-muted">${formatDate(inv.due_date)}</span>
-                        <strong>${formatCurrency(inv.outstanding_amount)}</strong>
-                    </div>
-                </a>
-            `).join('')}
+function paymentModal(d) {
+    const p = d.payment || {};
+    const refs = (d.references || []).map((r) => `<div class="npp-cn-invrow" data-name="${escapeHtml(r.reference_name)}" data-dt="${escapeHtml(r.reference_doctype)}">
+        <div><strong style="color:var(--npp-primary, #3b82f6);">${escapeHtml(r.reference_name)}</strong><div class="npp-text-sm npp-text-muted">${escapeHtml(r.reference_doctype)}</div></div>
+        <strong>${formatCurrency(r.allocated_amount)}</strong></div>`).join('') || '<div class="npp-text-muted npp-text-sm">Không có hóa đơn liên quan</div>';
+    const body = html`
+        <div class="npp-kpi-grid">
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Ngày</div><div class="npp-kpi-value" style="font-size:1rem;">${formatDate(p.posting_date)}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Số tiền</div><div class="npp-kpi-value" style="color:var(--npp-success);font-size:1rem;">${formatCurrency(p.paid_amount)}</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Tham chiếu</div><div class="npp-kpi-value" style="font-size:1rem;">${escapeHtml(p.reference_no || '—')}</div></div>
         </div>
+        <h4 class="npp-font-bold npp-mt-3">Hóa đơn liên quan</h4><div class="npp-mt-2">${refs}</div>
+        <h4 class="npp-font-bold npp-mt-3">Giao dịch kế toán</h4><div class="npp-mt-2">${glRows(d.gl)}</div>
     `;
+    showModal({ title: `💳 ${escapeHtml(p.name || '')}`, body });
+    document.querySelectorAll('#npp-modal-mount .npp-cn-invrow').forEach((el) =>
+        el.addEventListener('click', () => showVoucher(el.dataset.dt || 'Sales Invoice', el.dataset.name)));
+}
+
+function genericModal(d) {
+    showModal({
+        title: `📝 ${escapeHtml(d.voucher_type)} ${escapeHtml(d.voucher_no || '')}`,
+        body: html`<h4 class="npp-font-bold">Giao dịch kế toán</h4><div class="npp-mt-2">${glRows(d.gl)}</div>`,
+    });
+}
+
+// ─── Xuất CSV ─────────────────────────────────────────────────────────────
+function exportCSV() {
+    const from = document.getElementById('npp-cn-from')?.value || '';
+    const to = document.getElementById('npp-cn-to')?.value || '';
+    const type = document.getElementById('npp-cn-type')?.value || '';
+    const rows = _ledger.filter((e) =>
+        (!from || e.posting_date >= from) && (!to || e.posting_date <= to) && (!type || e.voucher_type === type));
+    if (!rows.length) return;
+    let csv = '﻿Ngày,Loại,Số CT,Tài khoản,Nợ,Có,Số dư,Ghi chú\n';
+    rows.forEach((e) => {
+        csv += [e.posting_date, e.voucher_type, e.voucher_no, `"${(e.account || '').replace(/"/g, '""')}"`,
+            e.debit || 0, e.credit || 0, e.running_balance || 0, `"${(e.remarks || '').replace(/"/g, '""')}"`].join(',') + '\n';
+    });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = `cong_no_${isoOffset(0)}.csv`;
+    a.click();
 }
