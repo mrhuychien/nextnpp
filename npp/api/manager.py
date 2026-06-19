@@ -1177,3 +1177,60 @@ def npp_detail(customer: str, months: int = 12) -> dict:
                         "not_bought": not_bought[:12]},
         "recommendations": recs,
     }
+
+
+@frappe.whitelist()
+def sales_matrix() -> dict:
+    """Bảng tổng-sắp doanh số NPP: tổng từ đầu NĂM TÀI CHÍNH + chi tiết từng tháng.
+
+    Doanh số = grand_total (đã loại HĐ opening); nhóm customer_group='NPP'. Năm tài
+    chính lấy theo cấu hình ERPNext (Fiscal Year); nếu không có → năm dương lịch.
+    Sắp xếp NPP theo tổng giảm dần (xếp hạng).
+    """
+    _guard()
+    today = getdate()
+    try:
+        from erpnext.accounts.utils import get_fiscal_year
+        fy = get_fiscal_year(today, as_dict=False)
+        fy_label, fy_start, fy_end = fy[0], getdate(fy[1]), getdate(fy[2])
+    except Exception:
+        fy_label = str(today.year)
+        fy_start, fy_end = getdate(f"{today.year}-01-01"), getdate(f"{today.year}-12-31")
+
+    customers = frappe.get_all(
+        "Customer", filters={"customer_group": NPP_GROUP, "disabled": 0},
+        fields=["name", "customer_name"], order_by="customer_name asc")
+    if not customers:
+        return {"fiscal_year": fy_label, "fy_start": str(fy_start), "months": [], "rows": [], "totals": {}}
+    names = tuple(c["name"] for c in customers)
+
+    end = min(fy_end, get_last_day(today))  # tới hết tháng hiện tại
+    months = []
+    d = get_first_day(fy_start)
+    while getdate(d) <= end:
+        dk = getdate(d)
+        months.append({"key": dk.strftime("%Y-%m"), "label": "T%d/%s" % (dk.month, dk.strftime("%y"))})
+        d = add_months(d, 1)
+    month_keys = [m["key"] for m in months]
+
+    by: dict = {}
+    for r in frappe.db.sql(
+        """SELECT customer AS c, DATE_FORMAT(posting_date,'%%Y-%%m') AS m, COALESCE(SUM(grand_total),0) AS v
+           FROM `tabSales Invoice`
+           WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s
+             AND IFNULL(is_opening,'No')!='Yes'
+           GROUP BY customer, m""", (names, fy_start, end), as_dict=True):
+        by.setdefault(r["c"], {})[r["m"]] = flt(r["v"])
+
+    col_totals = {k: 0.0 for k in month_keys}
+    rows = []
+    for c in customers:
+        mm = by.get(c["name"], {})
+        monthly = {k: flt(mm.get(k, 0.0)) for k in month_keys}
+        for k in month_keys:
+            col_totals[k] += monthly[k]
+        rows.append({"customer": c["name"], "customer_name": c["customer_name"],
+                     "monthly": monthly, "total": sum(monthly.values())})
+    rows.sort(key=lambda x: x["total"], reverse=True)
+    return {"fiscal_year": fy_label, "fy_start": str(fy_start), "months": months, "rows": rows,
+            "totals": {"monthly": col_totals, "grand_total": sum(col_totals.values())}}
