@@ -57,6 +57,40 @@ def debt_breakdown(balance, invoices, today=None) -> dict:
     return {"overdue": max(0.0, balance - in_term), "in_term": in_term, "buckets": buckets}
 
 
+def gl_balances(customers) -> dict:
+    """Số dư công nợ GL (debit−credit) theo TỪNG khách hàng. customers: list/tuple mã KH."""
+    customers = tuple(customers)
+    if not customers:
+        return {}
+    return {r["k"]: flt(r["v"]) for r in frappe.db.sql(
+        "SELECT party AS k, COALESCE(SUM(debit-credit),0) AS v FROM `tabGL Entry` "
+        "WHERE is_cancelled=0 AND party_type='Customer' AND party IN %s GROUP BY party",
+        (customers,), as_dict=True)}
+
+
+def channel_debt(customers, today=None) -> dict:
+    """{customer: {balance, overdue, in_term, buckets}} — công nợ GL + phân bổ tuổi nợ
+    cho 1 nhóm KH. Nguồn DUY NHẤT cho mọi tổng hợp công nợ cấp kênh (đảm bảo đồng nhất
+    với trang chủ & trang chi tiết)."""
+    today = today or getdate()
+    customers = tuple(customers)
+    if not customers:
+        return {}
+    bal = gl_balances(customers)
+    inv_by: dict = {}
+    for r in frappe.db.sql(
+        "SELECT customer, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 ORDER BY posting_date DESC",
+        (customers,), as_dict=True):
+        inv_by.setdefault(r["customer"], []).append(r)
+    out = {}
+    for c in customers:
+        b = bal.get(c, 0.0)
+        bd = debt_breakdown(b, inv_by.get(c, []), today)
+        out[c] = {"balance": b, "overdue": bd["overdue"], "in_term": bd["in_term"], "buckets": bd["buckets"]}
+    return out
+
+
 @frappe.whitelist()
 def summary(customer: str | None = None) -> dict:
     customer = require_customer(customer)

@@ -21,7 +21,7 @@ from frappe.utils import (
 )
 
 from ._utils import is_manager
-from .outstanding import debt_breakdown, gl_balance
+from .outstanding import channel_debt, debt_breakdown, gl_balance, gl_balances
 
 # Cấu hình
 NPP_GROUP = "NPP"
@@ -126,9 +126,8 @@ def overview(months: int = 3) -> dict:
            WHERE si.docstatus=1 AND si.customer IN %s AND si.posting_date BETWEEN %s AND %s
              AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box') GROUP BY si.customer""",
         (names, start, end))
-    debt_map = _sum_by_customer(
-        """SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice`
-           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer""", (names,))
+    # Công nợ theo GL (debit−credit) + phân bổ tuổi nợ cho TỪNG NPP — nguồn chuẩn duy nhất.
+    cd = channel_debt(names, today)
     fl_rows = frappe.db.sql(
         "SELECT customer AS k, MAX(posting_date) AS last, MIN(posting_date) AS first "
         "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)
@@ -152,13 +151,11 @@ def overview(months: int = 3) -> dict:
             """SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice`
                WHERE docstatus=1 AND customer IN %s AND posting_date >= %s AND IFNULL(is_opening,'No')!='Yes'
                GROUP BY customer""", (names, f"{tet_year}-11-01"))
-        req_of = lambda n: max(0.0, debt_map.get(n, 0.0) - tet_map.get(n, 0.0) * 0.5)
+        # Tết: cần TT = công nợ GL − 50% tổng HĐ Tết
+        req_of = lambda n: max(0.0, cd.get(n, {}).get("balance", 0.0) - tet_map.get(n, 0.0) * 0.5)
     else:
-        overdue_map = _sum_by_customer(
-            """SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice`
-               WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND posting_date <= %s
-               GROUP BY customer""", (names, add_days(today, -30)))
-        req_of = lambda n: overdue_map.get(n, 0.0)
+        # Thường: cần TT = phần công nợ GL đã quá hạn
+        req_of = lambda n: cd.get(n, {}).get("overdue", 0.0)
 
     rows = []
     t_rev = t_qty = t_debt = t_req = 0.0
@@ -169,7 +166,7 @@ def overview(months: int = 3) -> dict:
     for c in customers:
         name = c["name"]
         rev = rev_map.get(name, 0.0); qty = qty_map.get(name, 0.0)
-        debt = debt_map.get(name, 0.0); req = req_of(name)
+        debt = cd.get(name, {}).get("balance", 0.0); req = req_of(name)
         orders = ord_map.get(name, 0); last = last_map.get(name); first = first_map.get(name)
         days_since = date_diff(today, last) if last else None
 
@@ -274,16 +271,10 @@ def overview(months: int = 3) -> dict:
                  AND IFNULL(si.is_opening,'No')!='Yes' AND sii.uom IN ('Thùng','Box')
                GROUP BY i.item_group ORDER BY revenue DESC""", (names, start, end), as_dict=True)]
 
-    # ── Dải rủi ro nợ (P0-7) ────────────────────────────────────────────
-    overdue_total = flt(frappe.db.sql(
-        """SELECT COALESCE(SUM(outstanding_amount),0) FROM `tabSales Invoice`
-           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0
-             AND COALESCE(due_date, posting_date) < %s""", (names, today))[0][0] or 0)
-    over_90 = flt(frappe.db.sql(
-        """SELECT COALESCE(SUM(outstanding_amount),0) FROM `tabSales Invoice`
-           WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0
-             AND COALESCE(due_date, posting_date) < %s""", (names, add_days(today, -90)))[0][0] or 0)
-    dso = (t_debt / t_rev * date_diff(end, start) ) if t_rev and date_diff(end, start) else 0.0
+    # ── Dải rủi ro nợ (P0-7) — theo công nợ GL đã phân bổ tuổi nợ ────────
+    overdue_total = sum(v["overdue"] for v in cd.values())
+    over_90 = sum(v["buckets"]["over_90"] for v in cd.values())
+    dso = (t_debt / t_rev * date_diff(end, start)) if t_rev and date_diff(end, start) else 0.0
 
     return {
         "months": months,
@@ -549,31 +540,20 @@ def receivables() -> dict:
     today = getdate()
     names = _npp_names()
     if not names:
-        return {"buckets": {}, "top": [], "credit": []}
+        return {"buckets": {}, "top": [], "credit": [], "totals": {}}
 
-    # Số dư công nợ thực theo từng NPP (GL) + HĐ còn nợ theo NPP
-    bal_map = {r["k"]: flt(r["v"]) for r in frappe.db.sql(
-        "SELECT party AS k, COALESCE(SUM(debit-credit),0) AS v FROM `tabGL Entry` "
-        "WHERE is_cancelled=0 AND party_type='Customer' AND party IN %s GROUP BY party",
-        (names,), as_dict=True)}
-    inv_by: dict = {}
-    for r in frappe.db.sql(
-        "SELECT customer, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 ORDER BY posting_date DESC",
-        (names,), as_dict=True):
-        inv_by.setdefault(r["customer"], []).append(r)
-
+    # Công nợ GL + tuổi nợ theo từng NPP (nhóm customer_group='NPP') — chuẩn duy nhất.
+    cd = channel_debt(names, today)
     buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
     overdue_by: dict = {}
-    for c in names:
-        bal = bal_map.get(c, 0.0)
-        if bal <= 0:
-            continue
-        bd = debt_breakdown(bal, inv_by.get(c, []), today)
+    total_debt = 0.0
+    for c, v in cd.items():
+        total_debt += v["balance"]
         for k in buckets:
-            buckets[k] += bd["buckets"][k]
-        if bd["overdue"] > 0:
-            overdue_by[c] = bd["overdue"]
+            buckets[k] += v["buckets"][k]
+        if v["overdue"] > 0:
+            overdue_by[c] = v["overdue"]
+    total_overdue = sum(overdue_by.values())
 
     info = {c["name"]: c for c in frappe.get_all(
         "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
@@ -593,13 +573,15 @@ def receivables() -> dict:
         for k, climit in lim.items():
             if climit <= 0:
                 continue
-            out = max(0.0, bal_map.get(k, 0.0))
+            out = max(0.0, cd.get(k, {}).get("balance", 0.0))
             credit.append({"customer": k, "customer_name": (info.get(k) or {}).get("customer_name") or k,
                            "credit_limit": climit, "outstanding": out, "usage_pct": out / climit * 100})
         credit.sort(key=lambda x: x["usage_pct"], reverse=True)
     except Exception:
         credit = []
-    return {"buckets": buckets, "top": top, "credit": credit}
+    return {"buckets": buckets, "top": top, "credit": credit,
+            "totals": {"debt": total_debt, "overdue": total_overdue,
+                       "current": buckets["current"], "npp_with_debt": len(overdue_by)}}
 
 
 @frappe.whitelist()
@@ -677,9 +659,7 @@ def insights() -> dict:
         "WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)}
     info = {c["name"]: c for c in frappe.get_all(
         "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
-    debt_map = _sum_by_customer(
-        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
+    debt_map = gl_balances(names)  # công nợ thực theo GL (debit−credit)
 
     # MTD aligned: cùng số ngày đã qua của tháng
     elapsed = today.day
@@ -739,17 +719,7 @@ def action_center() -> dict:
     fl = {r["k"]: r for r in frappe.db.sql(
         "SELECT customer AS k, MAX(posting_date) AS last, MIN(posting_date) AS first, COUNT(*) AS orders "
         "FROM `tabSales Invoice` WHERE docstatus=1 AND customer IN %s GROUP BY customer", (names,), as_dict=True)}
-    debt = _sum_by_customer(
-        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 GROUP BY customer", (names,))
-    overdue = _sum_by_customer(
-        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND COALESCE(due_date,posting_date)<%s GROUP BY customer",
-        (names, today))
-    over90 = _sum_by_customer(
-        "SELECT customer AS k, COALESCE(SUM(outstanding_amount),0) AS v FROM `tabSales Invoice` "
-        "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 AND COALESCE(due_date,posting_date)<%s GROUP BY customer",
-        (names, add_days(today, -90)))
+    cd = channel_debt(names, today)  # công nợ GL + tuổi nợ theo từng NPP (chuẩn duy nhất)
     rev90 = _sum_by_customer(
         "SELECT customer AS k, COALESCE(SUM(grand_total),0) AS v FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
@@ -765,7 +735,8 @@ def action_center() -> dict:
         flc = fl.get(c, {})
         last = flc.get("last"); first = flc.get("first"); orders = int(flc.get("orders") or 0)
         days_since = date_diff(today, last) if last else None
-        d = debt.get(c, 0.0); od = overdue.get(c, 0.0); o90 = over90.get(c, 0.0)
+        _cd = cd.get(c, {}); d = _cd.get("balance", 0.0); od = _cd.get("overdue", 0.0)
+        o90 = _cd.get("buckets", {}).get("over_90", 0.0)
         r90 = rev90.get(c, 0.0); p90 = prev90.get(c, 0.0)
 
         if last is None:

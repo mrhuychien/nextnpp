@@ -33,10 +33,23 @@ export async function render({ container }) {
 
 function renderDebt(d) {
     const b = d.buckets || {};
+    const t = d.totals || {};
     const top = d.top || [];
     const credit = d.credit || [];
     document.getElementById('npp-db-body').innerHTML = html`
-        <div class="npp-kpi-grid" style="grid-template-columns:repeat(2,1fr);">
+        <div class="npp-kpi-grid">
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Tổng công nợ toàn kênh</div>
+                <div class="npp-kpi-value">${formatVNDShort(t.debt || 0)}</div>
+                <div class="npp-kpi-sub">Số dư sổ cái (GL) · nhóm NPP</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Nợ quá hạn</div>
+                <div class="npp-kpi-value danger">${formatVNDShort(t.overdue || 0)}</div>
+                <div class="npp-kpi-sub">${t.npp_with_debt || 0} NPP có nợ quá hạn</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Trong hạn</div>
+                <div class="npp-kpi-value">${formatVNDShort(t.current || 0)}</div></div>
+        </div>
+
+        <h3 class="npp-font-bold npp-mt-3">Tuổi nợ</h3>
+        <div class="npp-kpi-grid npp-mt-2" style="grid-template-columns:repeat(2,1fr);">
             ${BUCKETS.map(([k, label, color]) => html`
                 <div class="npp-kpi-card">
                     <div class="npp-kpi-label">${label}</div>
