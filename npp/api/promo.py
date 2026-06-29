@@ -148,34 +148,49 @@ def npp_participations(program: str | None = None, customer: str | None = None) 
     return rows
 
 
+def _gen_password(n: int = 8) -> str:
+    """Mật khẩu ngẫu nhiên có cả chữ thường/hoa/số (đủ mạnh cho policy mặc định)."""
+    import random
+    import string
+    pool = string.ascii_lowercase + string.ascii_uppercase + string.digits
+    while True:
+        pw = "".join(random.choice(pool) for _ in range(n))
+        if any(c.islower() for c in pw) and any(c.isupper() for c in pw) and any(c.isdigit() for c in pw):
+            return pw
+
+
 @frappe.whitelist()
 def create_staff(full_name: str, phone: str | None = None, email: str | None = None,
-                 cccd: str | None = None, customer: str | None = None) -> dict:
-    """NPP tạo nhân viên trên ĐỊA BÀN của mình: tạo User (chỉ role Sales Staff, đang
-    kích hoạt) + Sales Staff Profile (distributor = NPP). Không gán role nào khác
-    (không leo quyền). Cần email hoặc SĐT làm định danh đăng nhập."""
+                 cccd: str | None = None, password: str | None = None,
+                 customer: str | None = None) -> dict:
+    """NPP tạo nhân viên trên ĐỊA BÀN của mình. Đăng nhập = SỐ ĐIỆN THOẠI (User.username)
+    + mật khẩu (nhập tay hoặc tự sinh). Tạo User (chỉ role Sales Staff, kích hoạt, đặt
+    mật khẩu ngay) + Sales Staff Profile (distributor = NPP). Không gán role khác.
+    Trả về username + password để NPP gửi cho nhân viên."""
     customer = require_customer(customer)
     _require_salep()
     full_name = (full_name or "").strip()
     if not full_name:
         frappe.throw(_("Vui lòng nhập họ tên nhân viên."))
-    phone = (phone or "").strip()
-    email = (email or "").strip().lower()
-    if not email:
-        digits = re.sub(r"\D", "", phone)
-        if not digits:
-            frappe.throw(_("Cần email hoặc số điện thoại để tạo tài khoản."))
-        email = f"{digits}@nv.local"  # định danh tạm theo SĐT — đổi email thật sau
+    digits = re.sub(r"\D", "", phone or "")
+    if not digits:
+        frappe.throw(_("Vui lòng nhập số điện thoại (dùng làm tên đăng nhập)."))
+    email = (email or "").strip().lower() or f"{digits}@nv.local"
+    password = (password or "").strip() or _gen_password()
+
     if frappe.db.exists("User", email):
-        frappe.throw(_("Tài khoản đã tồn tại: {0}").format(email))
+        frappe.throw(_("Tài khoản (email) đã tồn tại: {0}").format(email))
+    if frappe.db.exists("User", {"username": digits}):
+        frappe.throw(_("Số điện thoại đã dùng cho tài khoản khác: {0}").format(digits))
 
     u = frappe.new_doc("User")
     u.email = email
     u.first_name = full_name
-    if phone:
-        u.mobile_no = phone
+    u.username = digits          # ĐĂNG NHẬP bằng số điện thoại
+    u.mobile_no = (phone or digits).strip()
     u.enabled = 1
     u.send_welcome_email = 0
+    u.new_password = password    # đặt mật khẩu ngay khi tạo
     u.flags.ignore_permissions = True
     u.insert(ignore_permissions=True)
     if frappe.db.exists("Role", SALES_STAFF_ROLE):
@@ -184,13 +199,12 @@ def create_staff(full_name: str, phone: str | None = None, email: str | None = N
     p = frappe.new_doc("Sales Staff Profile")
     p.user = email
     p.full_name = full_name
-    if phone:
-        p.phone = phone
+    p.phone = (phone or digits).strip()
     if (cccd or "").strip():
         p.cccd = cccd.strip()
     p.distributor = customer
     p.insert(ignore_permissions=True)
-    return {"name": p.name, "user": email}
+    return {"name": p.name, "user": email, "username": digits, "password": password}
 
 
 @frappe.whitelist()

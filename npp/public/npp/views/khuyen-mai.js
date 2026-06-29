@@ -152,31 +152,47 @@ function openCreateStaff() {
         title: '➕ Thêm nhân viên',
         body: html`<div style="display:flex;flex-direction:column;gap:10px;">
             <div><label class="npp-cn-flabel">Họ tên *</label><input id="nv-name" class="npp-cn-input" style="width:100%;"></div>
-            <div><label class="npp-cn-flabel">Số điện thoại</label><input id="nv-phone" class="npp-cn-input" style="width:100%;" inputmode="tel"></div>
-            <div><label class="npp-cn-flabel">Email (để đăng nhập)</label><input id="nv-email" type="email" class="npp-cn-input" style="width:100%;"></div>
-            <div><label class="npp-cn-flabel">CCCD</label><input id="nv-cccd" class="npp-cn-input" style="width:100%;" inputmode="numeric"></div>
+            <div><label class="npp-cn-flabel">Số điện thoại * (dùng để đăng nhập)</label><input id="nv-phone" class="npp-cn-input" style="width:100%;" inputmode="tel"></div>
+            <div><label class="npp-cn-flabel">Mật khẩu (để trống = tự tạo)</label><input id="nv-pass" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">Email (tuỳ chọn)</label><input id="nv-email" type="email" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">CCCD (tuỳ chọn)</label><input id="nv-cccd" class="npp-cn-input" style="width:100%;" inputmode="numeric"></div>
             <button id="nv-save" type="button" class="npp-btn-primary" style="padding:10px;">Tạo nhân viên</button>
-            <p class="npp-text-sm npp-text-muted">Tạo tài khoản (role Sales Staff) thuộc địa bàn của bạn để NV dùng app. Cần email hoặc SĐT làm định danh.</p>
+            <p class="npp-text-sm npp-text-muted">NV đăng nhập bằng <strong>số điện thoại + mật khẩu</strong>. Tài khoản gắn role Sales Staff thuộc địa bàn của bạn.</p>
         </div>`,
     });
     document.getElementById('nv-save').addEventListener('click', saveStaff);
 }
 
 async function saveStaff() {
-    const full_name = v('nv-name'), phone = v('nv-phone'), email = v('nv-email'), cccd = v('nv-cccd');
+    const full_name = v('nv-name'), phone = v('nv-phone'), password = v('nv-pass'), email = v('nv-email'), cccd = v('nv-cccd');
     if (!full_name) return showToast('Nhập họ tên nhân viên', 'warning');
-    if (!email && !phone) return showToast('Cần email hoặc số điện thoại', 'warning');
+    if (!phone) return showToast('Nhập số điện thoại (tên đăng nhập)', 'warning');
     const btn = document.getElementById('nv-save');
     if (btn) { btn.disabled = true; btn.textContent = 'Đang tạo...'; }
     try {
-        await api.call('npp.api.promo.create_staff', { full_name, phone, email, cccd });
-        closeModal();
+        const r = await api.call('npp.api.promo.create_staff', { full_name, phone, email, cccd, password });
         showToast('Đã tạo nhân viên', 'success');
+        showCredentials(r);
         refresh();
     } catch (err) {
         showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
         if (btn) { btn.disabled = false; btn.textContent = 'Tạo nhân viên'; }
     }
+}
+
+function showCredentials(r) {
+    showModal({
+        title: '✅ Đã tạo nhân viên',
+        body: html`
+            <p>Thông tin đăng nhập của nhân viên:</p>
+            <div class="npp-card" style="margin-top:8px;">
+                <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Tên đăng nhập (SĐT)</span><strong style="user-select:all;">${escapeHtml(r.username || '')}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Mật khẩu</span><strong style="user-select:all;">${escapeHtml(r.password || '')}</strong></div>
+            </div>
+            <p class="npp-text-sm npp-text-muted npp-mt-2">⚠️ Hãy lưu lại & gửi cho nhân viên. Mật khẩu chỉ hiển thị 1 lần ở đây.</p>
+            <button id="nv-done" type="button" class="npp-btn-primary" style="width:100%;padding:10px;margin-top:8px;">Xong</button>`,
+    });
+    document.getElementById('nv-done').addEventListener('click', closeModal);
 }
 
 async function toggleStaff(name, active) {
