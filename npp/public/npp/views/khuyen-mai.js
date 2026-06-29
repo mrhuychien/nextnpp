@@ -56,88 +56,111 @@ function renderBody(d) {
     const staff = d.staff || [];
     _staff = staff;
 
+    const apprRate = t.participations ? (t.approved / t.participations * 100) : 0;
+    const coverage = t.active_points ? (t.participated_points / t.active_points * 100) : 0;
+
     document.getElementById('npp-km-body').innerHTML = html`
-        <div class="npp-kpi-grid">
-            <div class="npp-kpi-card"><div class="npp-kpi-label">Chương trình đang chạy</div><div class="npp-kpi-value">${t.running || 0}<span style="font-size:.8rem;font-weight:600;">/${t.programs || 0}</span></div></div>
-            <div class="npp-kpi-card"><div class="npp-kpi-label">Điểm bán</div><div class="npp-kpi-value">${t.active_points || 0}<span style="font-size:.8rem;font-weight:600;">/${t.points || 0}</span></div><div class="npp-kpi-sub">${t.participated_points || 0} điểm đã tham gia</div></div>
-            <div class="npp-kpi-card"><div class="npp-kpi-label">Lượt được duyệt</div><div class="npp-kpi-value">${formatNumber(t.approved || 0)}</div><div class="npp-kpi-sub">/${formatNumber(t.participations || 0)} lượt</div></div>
-            <div class="npp-kpi-card"><div class="npp-kpi-label">Nhân viên</div><div class="npp-kpi-value">${t.staff || 0}</div></div>
+        <div class="npp-ql-nav" id="npp-km-tabs">
+            <a href="javascript:void(0)" data-t="nv" class="npp-active">👥 Nhân viên</a>
+            <a href="javascript:void(0)" data-t="db">🏪 Điểm bán</a>
+            <a href="javascript:void(0)" data-t="ct">🎯 Chương trình</a>
+            <a href="javascript:void(0)" data-t="bc">📊 Báo cáo</a>
         </div>
 
-        <!-- Chương trình & tiến độ -->
-        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Chương trình & tiến độ triển khai</h3>
-            ${programs.length ? html`<div class="npp-mt-2" style="display:flex;flex-direction:column;gap:10px;">
-                ${programs.map((p) => {
-                    const cov = p.coverage_pct || 0;
-                    const cColor = cov >= 80 ? 'var(--npp-success)' : (cov >= 40 ? 'var(--npp-warning)' : 'var(--npp-danger)');
-                    return `<div style="border:1px solid var(--npp-border);border-radius:12px;padding:12px;">
-                        <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
-                            <strong>${escapeHtml(p.program_name)}</strong>
-                            <span class="npp-badge npp-badge-${STATUS_BADGE[p.status] || 'muted'}">${escapeHtml(p.status || '—')}</span>
-                        </div>
-                        <div class="npp-text-sm npp-text-muted npp-mt-1">${p.start_date ? formatDate(p.start_date) : ''}${p.end_date ? ' → ' + formatDate(p.end_date) : ''}${p.reward_per_point ? ' · ' + formatNumber(p.reward_per_point) + 'đ/điểm' : ''}</div>
-                        <div class="npp-flex npp-justify-between npp-text-sm npp-mt-2"><span>Độ phủ điểm bán (đã duyệt)</span><strong>${p.approved_points}/${(d.totals || {}).active_points || 0} (${cov.toFixed(0)}%)</strong></div>
-                        ${bar(cov, cColor)}
-                        <div class="npp-flex npp-justify-between npp-text-sm npp-mt-2 npp-text-muted">
-                            <span>Tham gia: <strong>${p.participations}</strong> · Đã duyệt: <strong style="color:var(--npp-success);">${p.approved}</strong></span>
-                            <a href="javascript:void(0)" class="npp-link npp-km-progfilter" data-p="${escapeHtml(p.program)}">Xem điểm tham gia →</a>
-                        </div>
-                    </div>`;
-                }).join('')}
-            </div>` : `<div class="npp-mt-2">${emptyState({ icon: '📭', title: 'Chưa có chương trình' })}</div>`}
-        </div>
-
-        <!-- Điểm bán tham gia chương trình -->
-        <div class="npp-card npp-mt-3">
-            <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
-                <h3 class="npp-font-bold">Điểm bán tham gia chương trình</h3>
-                <select id="npp-km-progsel" style="padding:7px 10px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);">
-                    <option value="">Tất cả chương trình</option>
-                    ${programs.map((p) => `<option value="${escapeHtml(p.program)}">${escapeHtml(p.program_name)}</option>`).join('')}
-                </select>
+        <!-- TAB Nhân viên -->
+        <div id="npp-km-nv" class="npp-km-tab">
+            <div class="npp-card">
+                <div class="npp-flex npp-justify-between npp-items-center">
+                    <h3 class="npp-font-bold">Nhân viên & tiến độ</h3>
+                    <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm nhân viên</button>
+                </div>
+                ${staff.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                    <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th><th></th></tr></thead>
+                    <tbody>${staff.map((s) => {
+                        const rate = s.total ? s.approved / s.total * 100 : 0;
+                        return `<tr>
+                            <td data-label="Nhân viên"><strong>${escapeHtml(s.full_name)}</strong>${s.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(s.phone)}</div>` : ''}</td>
+                            <td data-label="Trạng thái" class="npp-text-center">${s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>'}</td>
+                            <td data-label="Lượt" class="npp-text-end">${formatNumber(s.total)}</td>
+                            <td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(s.approved)}</strong></td>
+                            <td data-label="Tỷ lệ">${rate.toFixed(0)}%${bar(rate, 'var(--npp-success)')}</td>
+                            <td class="npp-text-center" style="white-space:nowrap;">${s.name ? `
+                                <a href="javascript:void(0)" class="npp-link npp-km-edit" data-n="${escapeHtml(s.name)}">Sửa</a>
+                                · <a href="javascript:void(0)" class="npp-link npp-km-pass" data-n="${escapeHtml(s.name)}">Đổi MK</a>
+                                · <a href="javascript:void(0)" class="npp-link npp-km-toggle" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</a>` : ''}</td>
+                        </tr>`;
+                    }).join('')}</tbody></table></div>`
+                    : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên', message: 'Bấm "Thêm nhân viên" để bắt đầu.' })}</div>`}
             </div>
-            <div id="npp-km-parts" class="npp-mt-2"><div class="npp-skeleton" style="height:160px;"></div></div>
         </div>
 
-        <!-- Danh sách điểm bán -->
-        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
-            ${points.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                <thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-center">Tham gia</th><th></th></tr></thead>
-                <tbody>${points.map((p) => `<tr>
-                    <td data-label="Điểm bán"><strong>${escapeHtml(p.point_name || p.name)}</strong>${p.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(p.phone)}</div>` : ''}</td>
-                    <td data-label="Địa chỉ" class="npp-text-sm">${escapeHtml(p.address_line || '—')}</td>
-                    <td data-label="Trạng thái" class="npp-text-center">${p.is_active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Ngừng</span>'}</td>
-                    <td data-label="Tham gia" class="npp-text-center">${p.participated ? '✅' : '—'}</td>
-                    <td class="npp-text-center">${gpsLink(p.latitude, p.longitude)}</td>
-                </tr>`).join('')}</tbody></table></div>`
-                : `<div class="npp-mt-2">${emptyState({ icon: '🏪', title: 'Chưa có điểm bán' })}</div>`}
-        </div>
-
-        <!-- Nhân viên & tiến độ -->
-        <div class="npp-card npp-mt-3">
-            <div class="npp-flex npp-justify-between npp-items-center">
-                <h3 class="npp-font-bold">Nhân viên & tiến độ</h3>
-                <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm nhân viên</button>
+        <!-- TAB Điểm bán -->
+        <div id="npp-km-db" class="npp-km-tab" hidden>
+            <div class="npp-card"><h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
+                ${points.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                    <thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-center">Tham gia</th><th></th></tr></thead>
+                    <tbody>${points.map((p) => `<tr>
+                        <td data-label="Điểm bán"><strong>${escapeHtml(p.point_name || p.name)}</strong>${p.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(p.phone)}</div>` : ''}</td>
+                        <td data-label="Địa chỉ" class="npp-text-sm">${escapeHtml(p.address_line || '—')}</td>
+                        <td data-label="Trạng thái" class="npp-text-center">${p.is_active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Ngừng</span>'}</td>
+                        <td data-label="Tham gia" class="npp-text-center">${p.participated ? '✅' : '—'}</td>
+                        <td class="npp-text-center">${gpsLink(p.latitude, p.longitude)}</td>
+                    </tr>`).join('')}</tbody></table></div>`
+                    : `<div class="npp-mt-2">${emptyState({ icon: '🏪', title: 'Chưa có điểm bán' })}</div>`}
             </div>
-            ${staff.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th><th></th></tr></thead>
-                <tbody>${staff.map((s) => {
-                    const rate = s.total ? s.approved / s.total * 100 : 0;
-                    return `<tr>
-                        <td data-label="Nhân viên"><strong>${escapeHtml(s.full_name)}</strong>${s.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(s.phone)}</div>` : ''}</td>
-                        <td data-label="Trạng thái" class="npp-text-center">${s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>'}</td>
-                        <td data-label="Lượt" class="npp-text-end">${formatNumber(s.total)}</td>
-                        <td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(s.approved)}</strong></td>
-                        <td data-label="Tỷ lệ">${rate.toFixed(0)}%${bar(rate, 'var(--npp-success)')}</td>
-                        <td class="npp-text-center" style="white-space:nowrap;">${s.name ? `
-                            <a href="javascript:void(0)" class="npp-link npp-km-edit" data-n="${escapeHtml(s.name)}">Sửa</a>
-                            · <a href="javascript:void(0)" class="npp-link npp-km-pass" data-n="${escapeHtml(s.name)}">Đổi MK</a>
-                            · <a href="javascript:void(0)" class="npp-link npp-km-toggle" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</a>` : ''}</td>
-                    </tr>`;
-                }).join('')}</tbody></table></div>`
-                : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên', message: 'Bấm "Thêm nhân viên" để bắt đầu.' })}</div>`}
+        </div>
+
+        <!-- TAB Chương trình -->
+        <div id="npp-km-ct" class="npp-km-tab" hidden>
+            <div class="npp-card"><h3 class="npp-font-bold">Chương trình & tiến độ triển khai</h3>
+                ${programs.length ? html`<div class="npp-mt-2" style="display:flex;flex-direction:column;gap:10px;">
+                    ${programs.map((p) => {
+                        const cov = p.coverage_pct || 0;
+                        const cColor = cov >= 80 ? 'var(--npp-success)' : (cov >= 40 ? 'var(--npp-warning)' : 'var(--npp-danger)');
+                        return `<div style="border:1px solid var(--npp-border);border-radius:12px;padding:12px;">
+                            <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+                                <strong>${escapeHtml(p.program_name)}</strong>
+                                <span class="npp-badge npp-badge-${STATUS_BADGE[p.status] || 'muted'}">${escapeHtml(p.status || '—')}</span>
+                            </div>
+                            <div class="npp-text-sm npp-text-muted npp-mt-1">${p.start_date ? formatDate(p.start_date) : ''}${p.end_date ? ' → ' + formatDate(p.end_date) : ''}${p.reward_per_point ? ' · ' + formatNumber(p.reward_per_point) + 'đ/điểm' : ''}</div>
+                            <div class="npp-flex npp-justify-between npp-text-sm npp-mt-2"><span>Độ phủ điểm bán (đã duyệt)</span><strong>${p.approved_points}/${t.active_points || 0} (${cov.toFixed(0)}%)</strong></div>
+                            ${bar(cov, cColor)}
+                            <div class="npp-flex npp-justify-between npp-text-sm npp-mt-2 npp-text-muted">
+                                <span>Tham gia: <strong>${p.participations}</strong> · Đã duyệt: <strong style="color:var(--npp-success);">${p.approved}</strong></span>
+                                <a href="javascript:void(0)" class="npp-link npp-km-progfilter" data-p="${escapeHtml(p.program)}">Xem điểm tham gia →</a>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>` : `<div class="npp-mt-2">${emptyState({ icon: '📭', title: 'Chưa có chương trình' })}</div>`}
+            </div>
+            <div class="npp-card npp-mt-3">
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+                    <h3 class="npp-font-bold">Điểm bán tham gia chương trình</h3>
+                    <select id="npp-km-progsel" style="padding:7px 10px;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface);font-weight:600;color:var(--npp-text);">
+                        <option value="">Tất cả chương trình</option>
+                        ${programs.map((p) => `<option value="${escapeHtml(p.program)}">${escapeHtml(p.program_name)}</option>`).join('')}
+                    </select>
+                </div>
+                <div id="npp-km-parts" class="npp-mt-2"><div class="npp-skeleton" style="height:160px;"></div></div>
+            </div>
+        </div>
+
+        <!-- TAB Báo cáo -->
+        <div id="npp-km-bc" class="npp-km-tab" hidden>
+            <div class="npp-kpi-grid">
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Chương trình đang chạy</div><div class="npp-kpi-value">${t.running || 0}<span style="font-size:.8rem;font-weight:600;">/${t.programs || 0}</span></div></div>
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Điểm bán</div><div class="npp-kpi-value">${t.active_points || 0}<span style="font-size:.8rem;font-weight:600;">/${t.points || 0}</span></div><div class="npp-kpi-sub">${t.participated_points || 0} điểm đã tham gia</div></div>
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Lượt được duyệt</div><div class="npp-kpi-value">${formatNumber(t.approved || 0)}</div><div class="npp-kpi-sub">/${formatNumber(t.participations || 0)} lượt</div></div>
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Nhân viên</div><div class="npp-kpi-value">${t.staff || 0}</div></div>
+            </div>
+            <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Tổng quan</h3>
+                <div class="npp-flex npp-justify-between npp-text-sm npp-mt-2"><span>Tỷ lệ duyệt</span><strong>${apprRate.toFixed(0)}%</strong></div>${bar(apprRate, 'var(--npp-success)')}
+                <div class="npp-flex npp-justify-between npp-text-sm npp-mt-3"><span>Độ phủ điểm bán (đã tham gia)</span><strong>${coverage.toFixed(0)}%</strong></div>${bar(coverage, 'var(--npp-primary, #3b82f6)')}
+            </div>
         </div>
     `;
+
+    document.querySelectorAll('#npp-km-tabs a').forEach((a) => a.addEventListener('click', () => switchKmTab(a.dataset.t)));
 
     const sel = document.getElementById('npp-km-progsel');
     sel.addEventListener('change', () => loadParticipations(sel.value));
@@ -152,6 +175,14 @@ function renderBody(d) {
         a.addEventListener('click', () => openEditStaff(a.dataset.n)));
     document.querySelectorAll('.npp-km-pass').forEach((a) =>
         a.addEventListener('click', () => resetPass(a.dataset.n)));
+}
+
+function switchKmTab(t) {
+    document.querySelectorAll('#npp-km-tabs a').forEach((a) => a.classList.toggle('npp-active', a.dataset.t === t));
+    ['nv', 'db', 'ct', 'bc'].forEach((k) => {
+        const el = document.getElementById('npp-km-' + k);
+        if (el) el.hidden = (k !== t);
+    });
 }
 
 function v(id) { return (document.getElementById(id)?.value || '').trim(); }
