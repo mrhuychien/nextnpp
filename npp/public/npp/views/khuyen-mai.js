@@ -11,6 +11,7 @@ import { showToast } from '../components/toast.js';
 
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
+let _staff = [];
 
 function bar(pct, color) {
     pct = Math.max(0, Math.min(100, pct || 0));
@@ -53,6 +54,7 @@ function renderBody(d) {
     const programs = d.programs || [];
     const points = d.points || [];
     const staff = d.staff || [];
+    _staff = staff;
 
     document.getElementById('npp-km-body').innerHTML = html`
         <div class="npp-kpi-grid">
@@ -127,7 +129,10 @@ function renderBody(d) {
                         <td data-label="Lượt" class="npp-text-end">${formatNumber(s.total)}</td>
                         <td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(s.approved)}</strong></td>
                         <td data-label="Tỷ lệ">${rate.toFixed(0)}%${bar(rate, 'var(--npp-success)')}</td>
-                        <td class="npp-text-center">${s.name ? `<button type="button" class="npp-km-toggle npp-link" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</button>` : ''}</td>
+                        <td class="npp-text-center" style="white-space:nowrap;">${s.name ? `
+                            <a href="javascript:void(0)" class="npp-link npp-km-edit" data-n="${escapeHtml(s.name)}">Sửa</a>
+                            · <a href="javascript:void(0)" class="npp-link npp-km-pass" data-n="${escapeHtml(s.name)}">Đổi MK</a>
+                            · <a href="javascript:void(0)" class="npp-link npp-km-toggle" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</a>` : ''}</td>
                     </tr>`;
                 }).join('')}</tbody></table></div>`
                 : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên', message: 'Bấm "Thêm nhân viên" để bắt đầu.' })}</div>`}
@@ -143,6 +148,10 @@ function renderBody(d) {
     document.getElementById('npp-km-addstaff')?.addEventListener('click', openCreateStaff);
     document.querySelectorAll('.npp-km-toggle').forEach((b) =>
         b.addEventListener('click', () => toggleStaff(b.dataset.n, b.dataset.a)));
+    document.querySelectorAll('.npp-km-edit').forEach((a) =>
+        a.addEventListener('click', () => openEditStaff(a.dataset.n)));
+    document.querySelectorAll('.npp-km-pass').forEach((a) =>
+        a.addEventListener('click', () => resetPass(a.dataset.n)));
 }
 
 function v(id) { return (document.getElementById(id)?.value || '').trim(); }
@@ -202,6 +211,62 @@ async function toggleStaff(name, active) {
         refresh();
     } catch (err) {
         showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+    }
+}
+
+function openEditStaff(name) {
+    const s = _staff.find((x) => x.name === name);
+    if (!s) return;
+    showModal({
+        title: '✏️ Sửa nhân viên',
+        body: html`<div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="npp-cn-flabel">Họ tên *</label><input id="ev-name" class="npp-cn-input" style="width:100%;" value="${escapeHtml(s.full_name || '')}"></div>
+            <div><label class="npp-cn-flabel">Số điện thoại * (tên đăng nhập)</label><input id="ev-phone" class="npp-cn-input" style="width:100%;" inputmode="tel" value="${escapeHtml(s.phone || '')}"></div>
+            <div><label class="npp-cn-flabel">CCCD</label><input id="ev-cccd" class="npp-cn-input" style="width:100%;" inputmode="numeric" value="${escapeHtml(s.cccd || '')}"></div>
+            <button id="ev-save" type="button" class="npp-btn-primary" style="padding:10px;">Lưu</button>
+            <p class="npp-text-sm npp-text-muted">Đổi SĐT sẽ đổi luôn tên đăng nhập của nhân viên.</p>
+        </div>`,
+    });
+    document.getElementById('ev-save').addEventListener('click', () => saveEdit(name));
+}
+
+async function saveEdit(name) {
+    const full_name = v('ev-name'), phone = v('ev-phone'), cccd = v('ev-cccd');
+    if (!full_name) return showToast('Nhập họ tên', 'warning');
+    if (!phone) return showToast('Nhập số điện thoại', 'warning');
+    const btn = document.getElementById('ev-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang lưu...'; }
+    try {
+        await api.call('npp.api.promo.update_staff', { staff: name, full_name, phone, cccd });
+        closeModal(); showToast('Đã cập nhật nhân viên', 'success'); refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Lưu'; }
+    }
+}
+
+function resetPass(name) {
+    showModal({
+        title: '🔑 Đổi mật khẩu',
+        body: html`<div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="npp-cn-flabel">Mật khẩu mới (để trống = tự tạo)</label><input id="rp-pass" class="npp-cn-input" style="width:100%;"></div>
+            <button id="rp-save" type="button" class="npp-btn-primary" style="padding:10px;">Cấp lại mật khẩu</button>
+        </div>`,
+    });
+    document.getElementById('rp-save').addEventListener('click', () => doReset(name));
+}
+
+async function doReset(name) {
+    const password = v('rp-pass');
+    const btn = document.getElementById('rp-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang xử lý...'; }
+    try {
+        const r = await api.call('npp.api.promo.reset_staff_password', { staff: name, password });
+        showToast('Đã đổi mật khẩu', 'success');
+        showCredentials(r);
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Cấp lại mật khẩu'; }
     }
 }
 

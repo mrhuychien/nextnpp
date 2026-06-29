@@ -88,7 +88,7 @@ def npp_overview(customer: str | None = None) -> dict:
             b["approved"] += 1
     staff = frappe.get_all(
         "Sales Staff Profile", filters={"distributor": customer},
-        fields=["name", "user", "full_name", "phone"], order_by="full_name asc")
+        fields=["name", "user", "full_name", "phone", "cccd"], order_by="full_name asc")
     user_ids = [s["user"] for s in staff if s.get("user")]
     enabled = {u["name"]: u["enabled"] for u in frappe.get_all(
         "User", filters={"name": ["in", user_ids]}, fields=["name", "enabled"])} if user_ids else {}
@@ -96,7 +96,7 @@ def npp_overview(customer: str | None = None) -> dict:
     for s in staff:
         b = by_staff.get(s["user"], {"total": 0, "approved": 0})
         staff_rows.append({"name": s["name"], "user": s["user"], "full_name": s.get("full_name") or s["user"],
-                           "phone": s.get("phone"), "total": b["total"], "approved": b["approved"],
+                           "phone": s.get("phone"), "cccd": s.get("cccd"), "total": b["total"], "approved": b["approved"],
                            "active": bool(enabled.get(s["user"], 1)) if s.get("user") else True})
         seen.add(s["user"])
     for u, b in by_staff.items():  # người tạo tham gia nhưng chưa có hồ sơ NV
@@ -219,3 +219,64 @@ def set_staff_active(staff: str, active, customer: str | None = None) -> dict:
     if prof.get("user"):
         frappe.db.set_value("User", prof["user"], "enabled", active)
     return {"name": staff, "active": bool(active)}
+
+
+def _own_staff(staff, customer):
+    """Trả hồ sơ NV nếu thuộc địa bàn NPP, else throw."""
+    prof = frappe.db.get_value("Sales Staff Profile", staff, ["name", "user", "distributor"], as_dict=True)
+    if not prof or prof.get("distributor") != customer:
+        frappe.throw(_("Không có quyền với nhân viên này."), frappe.PermissionError)
+    return prof
+
+
+@frappe.whitelist()
+def update_staff(staff: str, full_name: str | None = None, phone: str | None = None,
+                 cccd: str | None = None, customer: str | None = None) -> dict:
+    """Sửa thông tin NV (tên/SĐT/CCCD). Đổi SĐT → đổi luôn tên đăng nhập (username)."""
+    customer = require_customer(customer)
+    _require_salep()
+    prof = _own_staff(staff, customer)
+
+    p = frappe.get_doc("Sales Staff Profile", staff)
+    if full_name and full_name.strip():
+        p.full_name = full_name.strip()
+    new_digits = None
+    if phone is not None:
+        new_digits = re.sub(r"\D", "", phone)
+        if not new_digits:
+            frappe.throw(_("Số điện thoại không hợp lệ."))
+        p.phone = phone.strip()
+    if cccd is not None:
+        p.cccd = (cccd or "").strip() or None
+    p.flags.ignore_permissions = True
+    p.save(ignore_permissions=True)
+
+    if prof.get("user"):
+        u = frappe.get_doc("User", prof["user"])
+        if full_name and full_name.strip():
+            u.first_name = full_name.strip()
+        if new_digits:
+            u.mobile_no = phone.strip()
+            if new_digits != (u.username or ""):
+                if frappe.db.exists("User", {"username": new_digits, "name": ["!=", u.name]}):
+                    frappe.throw(_("Số điện thoại đã dùng cho tài khoản khác: {0}").format(new_digits))
+                u.username = new_digits
+        u.flags.ignore_permissions = True
+        u.save(ignore_permissions=True)
+    return {"name": staff, "username": new_digits or None}
+
+
+@frappe.whitelist()
+def reset_staff_password(staff: str, password: str | None = None, customer: str | None = None) -> dict:
+    """Cấp lại mật khẩu cho NV (nhập tay hoặc tự sinh). Trả username + password để gửi NV."""
+    customer = require_customer(customer)
+    _require_salep()
+    prof = _own_staff(staff, customer)
+    if not prof.get("user"):
+        frappe.throw(_("Nhân viên chưa có tài khoản đăng nhập."))
+    password = (password or "").strip() or _gen_password()
+    u = frappe.get_doc("User", prof["user"])
+    u.new_password = password
+    u.flags.ignore_permissions = True
+    u.save(ignore_permissions=True)
+    return {"name": staff, "username": u.username or u.name, "password": password}
