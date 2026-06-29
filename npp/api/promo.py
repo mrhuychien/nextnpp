@@ -189,6 +189,7 @@ def create_staff(full_name: str, phone: str | None = None, email: str | None = N
     u.username = digits          # ĐĂNG NHẬP bằng số điện thoại
     u.mobile_no = (phone or digits).strip()
     u.enabled = 1
+    u.user_type = "Website User"  # CHẶN truy cập Desk (/app) — NV chỉ dùng portal
     u.send_welcome_email = 0
     u.new_password = password    # đặt mật khẩu ngay khi tạo
     u.flags.ignore_permissions = True

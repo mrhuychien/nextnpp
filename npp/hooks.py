@@ -44,6 +44,14 @@ permission_query_conditions = {}
 has_permission = {}
 
 # ─────────────────────────────────────────────────────────────────────
+# Đăng nhập NVBH (Sales Staff) → vào THẲNG portal nhân viên /dp (app salep),
+# KHÔNG vào Desk. NV được tạo là Website User nên Desk (/app) đã bị chặn sẵn.
+# ─────────────────────────────────────────────────────────────────────
+role_home_page = {
+    "Sales Staff": "dp",
+}
+
+# ─────────────────────────────────────────────────────────────────────
 # Fixtures — Custom fields for Sales Invoice & Item
 # (Defined in npp/fixtures/custom_field.json — auto-loaded on install)
 # ─────────────────────────────────────────────────────────────────────
