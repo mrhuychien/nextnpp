@@ -16,7 +16,15 @@ from frappe.utils import add_days, getdate, now_datetime
 APPROVED = "Đã duyệt"
 PENDING = "Chờ duyệt"
 REJECTED = "Từ chối"
+# "Cần duyệt" = mọi lượt CHƯA quyết định. Định nghĩa theo phủ định (không Đã duyệt,
+# không Từ chối) để KHÔNG bỏ sót khi state thật là "Nháp", rỗng/None, hay biến thể
+# chuỗi khác với "Chờ duyệt" (vd điểm bán tạo qua portal /dp ở trạng thái nháp).
+DECIDED = {APPROVED, REJECTED}
 ADMIN_ROLES = {"System Manager", "Channel Manager", "Sales Manager", "Accounts Manager"}
+
+
+def _is_pending(state) -> bool:
+    return (state or "") not in DECIDED
 
 
 def _guard() -> None:
@@ -125,9 +133,10 @@ def programs() -> list[dict]:
             a["pts"].add(p["display_point"])
         if p.get("distributor"):
             a["npps"].add(p["distributor"])
-        if p.get("workflow_state") == APPROVED:
+        st = p.get("workflow_state")
+        if st == APPROVED:
             a["approved"] += 1
-        elif p.get("workflow_state") == PENDING:
+        elif st != REJECTED:        # chưa quyết định (Chờ duyệt/Nháp/…) = cần duyệt
             a["pending"] += 1
     rows = []
     for pg in progs:
@@ -169,10 +178,11 @@ def program_detail(program: str) -> dict:
     pending, by_npp_map, by_staff_map = [], {}, {}
     for p in parts:
         st = p.get("workflow_state")
-        if st == PENDING:
+        if _is_pending(st):
             pending.append({"name": p["name"], "point_name": pt_names.get(p["display_point"]) or p["display_point"],
                             "npp": cn.get(p.get("distributor")) or p.get("distributor"),
                             "staff": sn.get(p.get("owner")) or p.get("owner"),
+                            "workflow_state": st,
                             "modified": str(p["modified"]) if p.get("modified") else None})
         d = p.get("distributor") or "—"
         b = by_npp_map.setdefault(d, {"customer": d, "customer_name": cn.get(d, d),
@@ -226,12 +236,14 @@ def program_detail(program: str) -> dict:
 def pending_participations(program: str | None = None) -> list[dict]:
     _guard()
     _require_salep()
-    filters = {"workflow_state": PENDING}
-    if program:
-        filters["promotion_program"] = program
+    # Lấy mọi lượt rồi lọc "chưa quyết định" trong Python (NULL-safe; SQL NOT IN bỏ
+    # sót NULL). Trả kèm workflow_state để UI hiện badge phân biệt Nháp/Chờ duyệt.
+    filters = {"promotion_program": program} if program else {}
     rows = frappe.get_all("Display Participation", filters=filters,
-                          fields=["name", "display_point", "promotion_program", "distributor", "owner", "modified"],
+                          fields=["name", "display_point", "promotion_program", "distributor",
+                                  "owner", "workflow_state", "modified"],
                           order_by="modified asc")
+    rows = [r for r in rows if _is_pending(r.get("workflow_state"))]
     if not rows:
         return []
     pt, pg, sn = _point_names(), _program_names(), _staff_names()
@@ -304,3 +316,21 @@ def reject_participation(name: str, reason: str | None = None) -> dict:
     doc.flags.ignore_permissions = True
     doc.save(ignore_permissions=True)
     return {"name": name, "state": REJECTED}
+
+
+@frappe.whitelist()
+def state_summary() -> dict:
+    """Chẩn đoán khi danh sách 'cần duyệt' rỗng: tổng lượt tham gia + phân bố theo
+    workflow_state (để biết là chưa có lượt nào, hay đã duyệt/từ chối hết, hay
+    state thật khác kỳ vọng)."""
+    _guard()
+    _require_salep()
+    counts: dict = {}
+    total = 0
+    for p in frappe.get_all("Display Participation", fields=["workflow_state"]):
+        total += 1
+        k = p.get("workflow_state") or "(trống)"
+        counts[k] = counts.get(k, 0) + 1
+    return {"total": total, "by_state": counts,
+            "points": frappe.db.count("Display Point"),
+            "programs": frappe.db.count("Promotion Program")}

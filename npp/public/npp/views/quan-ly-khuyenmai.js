@@ -65,17 +65,26 @@ async function loadTab(t) {
 function renderPending(rows) {
     const c = document.getElementById('km-content');
     if (!rows.length) {
-        c.innerHTML = '<div class="npp-empty"><div class="npp-empty-icon">✅</div><div class="npp-empty-title">Không có lượt chờ duyệt</div></div>';
+        c.innerHTML = '<div class="npp-empty" id="km-empty"><div class="npp-empty-icon">✅</div><div class="npp-empty-title">Không có điểm bán nào cần duyệt</div><div class="npp-text-sm npp-text-muted">Tất cả lượt tham gia đã được duyệt/từ chối — hoặc chưa có lượt nào.</div></div>';
+        // Chẩn đoán: hiển thị tổng lượt + phân bố trạng thái để biết vì sao rỗng.
+        api.call('npp.api.promo_admin.state_summary').then((s) => {
+            const el = document.getElementById('km-empty');
+            if (!el || !s) return;
+            const parts = Object.entries(s.by_state || {}).map(([k, v]) => `${escapeHtml(k)}: ${formatNumber(v)}`).join(' · ');
+            el.insertAdjacentHTML('beforeend',
+                `<div class="npp-text-sm npp-text-muted npp-mt-2">Tổng ${formatNumber(s.total)} lượt tham gia${parts ? ` (${parts})` : ''} · ${formatNumber(s.points)} điểm bán · ${formatNumber(s.programs)} chương trình</div>`);
+        }).catch(() => {});
         return;
     }
-    c.innerHTML = `<div class="npp-card"><h3 class="npp-font-bold">Điểm bán chờ duyệt (${rows.length})</h3>
+    c.innerHTML = `<div class="npp-card"><h3 class="npp-font-bold">Điểm bán cần duyệt (${rows.length})</h3>
         <div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-            <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Ngày</th></tr></thead>
+            <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Trạng thái</th><th>Ngày</th></tr></thead>
             <tbody>${rows.map((r) => `<tr class="km-prow" data-n="${escapeHtml(r.name)}" style="cursor:pointer;">
                 <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name)}</strong></td>
                 <td data-label="NPP">${escapeHtml(r.npp || '—')}</td>
                 <td data-label="Chương trình" class="npp-text-sm">${escapeHtml(r.program_name)}</td>
                 <td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(r.staff || '—')}</td>
+                <td data-label="Trạng thái"><span class="npp-badge npp-badge-${WF_BADGE[r.workflow_state] || 'muted'}">${escapeHtml(r.workflow_state || '—')}</span></td>
                 <td data-label="Ngày" class="npp-text-sm">${r.modified ? formatDate(r.modified) : ''}</td>
             </tr>`).join('')}</tbody></table></div>
         <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để xem chi tiết + ảnh và Duyệt / Từ chối.</p></div>`;
@@ -87,7 +96,7 @@ async function participationModal(name) {
     try {
         const d = await api.call('npp.api.promo_admin.participation_detail', { name });
         const p = d.participation || {}, pt = d.point || {}, pg = d.program || {};
-        const pending = p.workflow_state === 'Chờ duyệt';
+        const pending = !['Đã duyệt', 'Từ chối'].includes(p.workflow_state);  // chưa quyết định → cho Duyệt/Từ chối
         const imgs = (d.images || []).map((im) =>
             `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy"
                 style="width:100%;height:160px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);">
@@ -182,10 +191,10 @@ async function programDetail(program) {
                 <div class="npp-kpi-card"><div class="npp-kpi-label">Độ phủ</div><div class="npp-kpi-value">${(cov.pct || 0).toFixed(0)}%</div><div class="npp-kpi-sub">${cov.approved_points || 0}/${cov.total_active || 0} điểm</div></div>
                 <div class="npp-kpi-card"><div class="npp-kpi-label">Độ mở (điểm mới)</div><div class="npp-kpi-value">${formatNumber(d.new_points || 0)}</div><div class="npp-kpi-sub">mở trong kỳ CT</div></div>
             </div>
-            <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Điểm bán chờ duyệt (${(d.pending || []).length})</h3>
-                ${(d.pending || []).length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>NPP</th><th>Nhân viên</th><th>Ngày</th></tr></thead>
-                    <tbody>${d.pending.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="NPP">${escapeHtml(x.npp || '—')}</td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(x.staff || '—')}</td><td data-label="Ngày" class="npp-text-sm">${x.modified ? formatDate(x.modified) : ''}</td></tr>`).join('')}</tbody></table></div>`
-                    : '<div class="npp-text-muted npp-mt-2">Không có lượt chờ duyệt 🎉</div>'}
+            <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Điểm bán cần duyệt (${(d.pending || []).length})</h3>
+                ${(d.pending || []).length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>NPP</th><th>Nhân viên</th><th>Trạng thái</th><th>Ngày</th></tr></thead>
+                    <tbody>${d.pending.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="NPP">${escapeHtml(x.npp || '—')}</td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(x.staff || '—')}</td><td data-label="Trạng thái"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.modified ? formatDate(x.modified) : ''}</td></tr>`).join('')}</tbody></table></div>`
+                    : '<div class="npp-text-muted npp-mt-2">Không có lượt cần duyệt 🎉</div>'}
             </div>
             <div class="npp-grid-2 npp-mt-3">
                 <div class="npp-card"><h3 class="npp-font-bold">Tiến độ theo NPP</h3>
