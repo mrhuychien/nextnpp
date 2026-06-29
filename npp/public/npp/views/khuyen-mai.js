@@ -3,6 +3,8 @@ import { formatDate, formatNumber, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 import { emptyState } from '../components/empty-state.js';
+import { showModal, closeModal } from '../components/modal.js';
+import { showToast } from '../components/toast.js';
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
@@ -24,6 +26,12 @@ export async function render({ container }) {
         ${banner({ title: 'Khuyến mại', subtitle: 'Quản lý chương trình trưng bày trên địa bàn của bạn' })}
         <div id="npp-km-body"><div class="npp-skeleton" style="height:320px;"></div></div>
     `;
+    await refresh();
+}
+
+async function refresh() {
+    const body = document.getElementById('npp-km-body');
+    if (body) body.innerHTML = '<div class="npp-skeleton" style="height:320px;"></div>';
     try {
         const d = await api.call('npp.api.promo.npp_overview');
         renderBody(d);
@@ -35,7 +43,7 @@ export async function render({ container }) {
             : (/custom_customer|chưa.*gán|not.*customer/i.test(msg)
                 ? 'Tài khoản chưa gán Nhà phân phối (Customer).'
                 : escapeHtml(msg));
-        document.getElementById('npp-km-body').innerHTML =
+        if (body) body.innerHTML =
             `<div class="npp-empty"><div class="npp-empty-icon">🎁</div><div class="npp-empty-title">Chưa tải được dữ liệu khuyến mại</div><div class="npp-text-sm npp-text-muted">${hint}</div></div>`;
     }
 }
@@ -104,19 +112,25 @@ function renderBody(d) {
         </div>
 
         <!-- Nhân viên & tiến độ -->
-        <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Nhân viên & tiến độ triển khai</h3>
+        <div class="npp-card npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-items-center">
+                <h3 class="npp-font-bold">Nhân viên & tiến độ</h3>
+                <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm nhân viên</button>
+            </div>
             ${staff.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                <thead><tr><th>Nhân viên</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:120px;">Tỷ lệ duyệt</th></tr></thead>
+                <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th><th></th></tr></thead>
                 <tbody>${staff.map((s) => {
                     const rate = s.total ? s.approved / s.total * 100 : 0;
                     return `<tr>
                         <td data-label="Nhân viên"><strong>${escapeHtml(s.full_name)}</strong>${s.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(s.phone)}</div>` : ''}</td>
+                        <td data-label="Trạng thái" class="npp-text-center">${s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>'}</td>
                         <td data-label="Lượt" class="npp-text-end">${formatNumber(s.total)}</td>
                         <td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(s.approved)}</strong></td>
                         <td data-label="Tỷ lệ">${rate.toFixed(0)}%${bar(rate, 'var(--npp-success)')}</td>
+                        <td class="npp-text-center">${s.name ? `<button type="button" class="npp-km-toggle npp-link" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</button>` : ''}</td>
                     </tr>`;
                 }).join('')}</tbody></table></div>`
-                : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên' })}</div>`}
+                : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên', message: 'Bấm "Thêm nhân viên" để bắt đầu.' })}</div>`}
         </div>
     `;
 
@@ -126,6 +140,53 @@ function renderBody(d) {
         sel.value = a.dataset.p; loadParticipations(a.dataset.p);
         document.getElementById('npp-km-parts').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
+    document.getElementById('npp-km-addstaff')?.addEventListener('click', openCreateStaff);
+    document.querySelectorAll('.npp-km-toggle').forEach((b) =>
+        b.addEventListener('click', () => toggleStaff(b.dataset.n, b.dataset.a)));
+}
+
+function v(id) { return (document.getElementById(id)?.value || '').trim(); }
+
+function openCreateStaff() {
+    showModal({
+        title: '➕ Thêm nhân viên',
+        body: html`<div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="npp-cn-flabel">Họ tên *</label><input id="nv-name" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">Số điện thoại</label><input id="nv-phone" class="npp-cn-input" style="width:100%;" inputmode="tel"></div>
+            <div><label class="npp-cn-flabel">Email (để đăng nhập)</label><input id="nv-email" type="email" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">CCCD</label><input id="nv-cccd" class="npp-cn-input" style="width:100%;" inputmode="numeric"></div>
+            <button id="nv-save" type="button" class="npp-btn-primary" style="padding:10px;">Tạo nhân viên</button>
+            <p class="npp-text-sm npp-text-muted">Tạo tài khoản (role Sales Staff) thuộc địa bàn của bạn để NV dùng app. Cần email hoặc SĐT làm định danh.</p>
+        </div>`,
+    });
+    document.getElementById('nv-save').addEventListener('click', saveStaff);
+}
+
+async function saveStaff() {
+    const full_name = v('nv-name'), phone = v('nv-phone'), email = v('nv-email'), cccd = v('nv-cccd');
+    if (!full_name) return showToast('Nhập họ tên nhân viên', 'warning');
+    if (!email && !phone) return showToast('Cần email hoặc số điện thoại', 'warning');
+    const btn = document.getElementById('nv-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang tạo...'; }
+    try {
+        await api.call('npp.api.promo.create_staff', { full_name, phone, email, cccd });
+        closeModal();
+        showToast('Đã tạo nhân viên', 'success');
+        refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Tạo nhân viên'; }
+    }
+}
+
+async function toggleStaff(name, active) {
+    try {
+        await api.call('npp.api.promo.set_staff_active', { staff: name, active });
+        showToast(Number(active) ? 'Đã kích hoạt nhân viên' : 'Đã tạm dừng nhân viên', 'success');
+        refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+    }
 }
 
 async function loadParticipations(program) {

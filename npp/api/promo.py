@@ -11,12 +11,16 @@ nên an toàn và không phụ thuộc việc NPP có role trên doctype của s
 
 from __future__ import annotations
 
+import re
+
 import frappe
 from frappe import _
+from frappe.utils import cint
 
 from ._utils import require_customer
 
 APPROVED = "Đã duyệt"
+SALES_STAFF_ROLE = "Sales Staff"
 
 
 def _require_salep() -> None:
@@ -84,17 +88,21 @@ def npp_overview(customer: str | None = None) -> dict:
             b["approved"] += 1
     staff = frappe.get_all(
         "Sales Staff Profile", filters={"distributor": customer},
-        fields=["user", "full_name", "phone"], order_by="full_name asc")
+        fields=["name", "user", "full_name", "phone"], order_by="full_name asc")
+    user_ids = [s["user"] for s in staff if s.get("user")]
+    enabled = {u["name"]: u["enabled"] for u in frappe.get_all(
+        "User", filters={"name": ["in", user_ids]}, fields=["name", "enabled"])} if user_ids else {}
     staff_rows, seen = [], set()
     for s in staff:
         b = by_staff.get(s["user"], {"total": 0, "approved": 0})
-        staff_rows.append({"user": s["user"], "full_name": s.get("full_name") or s["user"],
-                           "phone": s.get("phone"), "total": b["total"], "approved": b["approved"]})
+        staff_rows.append({"name": s["name"], "user": s["user"], "full_name": s.get("full_name") or s["user"],
+                           "phone": s.get("phone"), "total": b["total"], "approved": b["approved"],
+                           "active": bool(enabled.get(s["user"], 1)) if s.get("user") else True})
         seen.add(s["user"])
     for u, b in by_staff.items():  # người tạo tham gia nhưng chưa có hồ sơ NV
         if u and u not in seen:
-            staff_rows.append({"user": u, "full_name": u, "phone": None,
-                               "total": b["total"], "approved": b["approved"]})
+            staff_rows.append({"name": None, "user": u, "full_name": u, "phone": None,
+                               "total": b["total"], "approved": b["approved"], "active": True})
     staff_rows.sort(key=lambda x: x["approved"], reverse=True)
 
     participated = {p["display_point"] for p in parts if p.get("display_point")}
@@ -138,3 +146,62 @@ def npp_participations(program: str | None = None, customer: str | None = None) 
         r["program_name"] = pg_names.get(r["promotion_program"]) or r["promotion_program"]
         r["modified"] = str(r["modified"]) if r.get("modified") else None
     return rows
+
+
+@frappe.whitelist()
+def create_staff(full_name: str, phone: str | None = None, email: str | None = None,
+                 cccd: str | None = None, customer: str | None = None) -> dict:
+    """NPP tạo nhân viên trên ĐỊA BÀN của mình: tạo User (chỉ role Sales Staff, đang
+    kích hoạt) + Sales Staff Profile (distributor = NPP). Không gán role nào khác
+    (không leo quyền). Cần email hoặc SĐT làm định danh đăng nhập."""
+    customer = require_customer(customer)
+    _require_salep()
+    full_name = (full_name or "").strip()
+    if not full_name:
+        frappe.throw(_("Vui lòng nhập họ tên nhân viên."))
+    phone = (phone or "").strip()
+    email = (email or "").strip().lower()
+    if not email:
+        digits = re.sub(r"\D", "", phone)
+        if not digits:
+            frappe.throw(_("Cần email hoặc số điện thoại để tạo tài khoản."))
+        email = f"{digits}@nv.local"  # định danh tạm theo SĐT — đổi email thật sau
+    if frappe.db.exists("User", email):
+        frappe.throw(_("Tài khoản đã tồn tại: {0}").format(email))
+
+    u = frappe.new_doc("User")
+    u.email = email
+    u.first_name = full_name
+    if phone:
+        u.mobile_no = phone
+    u.enabled = 1
+    u.send_welcome_email = 0
+    u.flags.ignore_permissions = True
+    u.insert(ignore_permissions=True)
+    if frappe.db.exists("Role", SALES_STAFF_ROLE):
+        u.add_roles(SALES_STAFF_ROLE)  # CHỈ role Sales Staff
+
+    p = frappe.new_doc("Sales Staff Profile")
+    p.user = email
+    p.full_name = full_name
+    if phone:
+        p.phone = phone
+    if (cccd or "").strip():
+        p.cccd = cccd.strip()
+    p.distributor = customer
+    p.insert(ignore_permissions=True)
+    return {"name": p.name, "user": email}
+
+
+@frappe.whitelist()
+def set_staff_active(staff: str, active, customer: str | None = None) -> dict:
+    """Bật/tắt hoạt động (duyệt) nhân viên — đổi User.enabled. Chỉ NV thuộc địa bàn NPP."""
+    customer = require_customer(customer)
+    _require_salep()
+    prof = frappe.db.get_value("Sales Staff Profile", staff, ["name", "user", "distributor"], as_dict=True)
+    if not prof or prof.get("distributor") != customer:
+        frappe.throw(_("Không có quyền với nhân viên này."), frappe.PermissionError)
+    active = 1 if cint(active) else 0
+    if prof.get("user"):
+        frappe.db.set_value("User", prof["user"], "enabled", active)
+    return {"name": staff, "active": bool(active)}
