@@ -190,18 +190,56 @@ async function saveStaff() {
 }
 
 function showCredentials(r) {
+    const uname = r.username || '';
+    const pw = r.password || '';
+    const baseUrl = window.NPP_CONTEXT?.baseUrl || '';
+    const msg = `Tài khoản đăng nhập${baseUrl ? ' (' + baseUrl + ')' : ''}:\n`
+        + `Tên đăng nhập (SĐT): ${uname}\nMật khẩu: ${pw}`;
     showModal({
         title: '✅ Đã tạo nhân viên',
         body: html`
             <p>Thông tin đăng nhập của nhân viên:</p>
             <div class="npp-card" style="margin-top:8px;">
-                <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Tên đăng nhập (SĐT)</span><strong style="user-select:all;">${escapeHtml(r.username || '')}</strong></div>
-                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Mật khẩu</span><strong style="user-select:all;">${escapeHtml(r.password || '')}</strong></div>
+                <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Tên đăng nhập (SĐT)</span><strong style="user-select:all;">${escapeHtml(uname)}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Mật khẩu</span><strong style="user-select:all;">${escapeHtml(pw)}</strong></div>
             </div>
-            <p class="npp-text-sm npp-text-muted npp-mt-2">⚠️ Hãy lưu lại & gửi cho nhân viên. Mật khẩu chỉ hiển thị 1 lần ở đây.</p>
-            <button id="nv-done" type="button" class="npp-btn-primary" style="width:100%;padding:10px;margin-top:8px;">Xong</button>`,
+            <p class="npp-text-sm npp-text-muted npp-mt-2">⚠️ Lưu lại & gửi cho nhân viên. Mật khẩu chỉ hiển thị 1 lần ở đây.</p>
+            <div class="npp-flex" style="gap:8px;margin-top:8px;">
+                <button id="nv-copy" type="button" class="npp-btn-primary" style="flex:2;padding:10px;">📋 Sao chép để gửi NV</button>
+                <button id="nv-done" type="button" class="npp-cn-btn" style="flex:1;padding:10px;">Xong</button>
+            </div>`,
     });
     document.getElementById('nv-done').addEventListener('click', closeModal);
+    document.getElementById('nv-copy').addEventListener('click', () => copyText(msg, 'nv-copy'));
+}
+
+async function copyText(text, btnId) {
+    let ok = false;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+        }
+    } catch (e) { ok = false; }
+    if (!ok) {  // fallback cho ngữ cảnh không bảo mật / trình duyệt cũ
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+        } catch (e) { ok = false; }
+    }
+    if (ok) {
+        showToast('Đã sao chép thông tin đăng nhập', 'success');
+        const b = btnId && document.getElementById(btnId);
+        if (b) { const t = b.textContent; b.textContent = '✓ Đã sao chép'; setTimeout(() => { if (b) b.textContent = t; }, 1500); }
+    } else {
+        showToast('Không sao chép được — hãy chọn & copy thủ công', 'warning');
+    }
 }
 
 async function toggleStaff(name, active) {
