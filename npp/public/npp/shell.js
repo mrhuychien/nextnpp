@@ -129,6 +129,48 @@ if (window.NPP_CONTEXT?.isManager) {
     }
 }
 
+// ─── 8b. Tài khoản / Đăng xuất (cạnh nút đổi màu giao diện) ────────────
+(function setupAccount() {
+    const actions = document.querySelector('.npp-header-actions');
+    if (!actions || document.getElementById('npp-btn-account')) return;
+    const ctx = window.NPP_CONTEXT || {};
+    const isGuest = !ctx.user || ctx.user === 'Guest';
+    const esc = (s) => { const d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; };
+
+    const btn = document.createElement('button');
+    btn.id = 'npp-btn-account';
+    btn.className = 'npp-icon-btn';
+    btn.type = 'button';
+    btn.title = isGuest ? 'Đăng nhập' : 'Tài khoản';
+    btn.setAttribute('aria-label', btn.title);
+    btn.innerHTML = '<i class="fas fa-circle-user"></i>';
+    actions.appendChild(btn);  // cạnh nút đổi mùa/giao diện
+
+    if (isGuest) {
+        btn.addEventListener('click', () => { location.href = '/login'; });
+        return;
+    }
+
+    const menu = document.createElement('div');
+    menu.id = 'npp-account-menu';
+    menu.className = 'npp-acct-menu';
+    menu.hidden = true;
+    menu.innerHTML = `
+        <div class="npp-acct-name"><i class="fas fa-user"></i> ${esc(ctx.userFullName || ctx.user)}</div>
+        ${ctx.customerName ? `<div class="npp-acct-sub">${esc(ctx.customerName)}</div>` : ''}
+        <button type="button" id="npp-acct-logout" class="npp-acct-logout"><i class="fas fa-right-from-bracket"></i> Đăng xuất</button>`;
+    document.body.appendChild(menu);
+
+    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+    document.addEventListener('click', (e) => { if (!menu.hidden && e.target !== btn && !menu.contains(e.target)) menu.hidden = true; });
+    menu.querySelector('#npp-acct-logout').addEventListener('click', () => {
+        try {
+            if (window.frappe?.call) { window.frappe.call({ method: 'logout', callback: () => { location.href = '/login'; } }); return; }
+        } catch (e) { /* ignore */ }
+        location.href = '/api/method/logout';
+    });
+})();
+
 // ─── 9. Start ──────────────────────────────────────────────────────────
 router.start();
 

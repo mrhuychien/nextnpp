@@ -850,3 +850,14 @@
 .npp-cn-btn:hover { background: var(--npp-border); }
 .npp-cn-invrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--npp-surface-2); border: 1px solid var(--npp-border); border-radius: 12px; padding: .8rem 1rem; margin-bottom: .6rem; cursor: pointer; }
 .npp-cn-invrow:hover { border-color: var(--npp-primary, #3b82f6); }
+
+/* ─── Account / logout menu (top header) ─── */
+.npp-acct-menu { position: fixed; top: calc(var(--npp-header-h) + 6px); right: 8px; z-index: 1200;
+    background: var(--npp-surface); border: 1px solid var(--npp-border); border-radius: 14px;
+    box-shadow: var(--npp-shadow-lg); padding: 12px 14px; min-width: 190px; }
+.npp-acct-menu[hidden] { display: none; }
+.npp-acct-name { font-weight: 700; font-size: .92rem; }
+.npp-acct-sub { font-size: .78rem; color: var(--npp-text-3); margin-top: 2px; }
+.npp-acct-logout { margin-top: 12px; width: 100%; padding: 8px 10px; border: 1px solid var(--npp-border);
+    border-radius: 10px; background: var(--npp-surface-2); color: var(--npp-danger); font-weight: 700; cursor: pointer; }
+.npp-acct-logout:hover { background: var(--npp-danger); color: #fff; }

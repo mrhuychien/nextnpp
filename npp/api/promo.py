@@ -15,7 +15,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import cint, flt
 
 from ._utils import require_customer
 
@@ -300,6 +300,36 @@ def delete_staff(staff: str, customer: str | None = None) -> dict:
     if user and frappe.db.exists("User", user):
         frappe.db.set_value("User", user, "enabled", 0)
     return {"name": staff}
+
+
+@frappe.whitelist()
+def create_point(point_name: str, address_line: str | None = None, phone: str | None = None,
+                 latitude=None, longitude=None, gps_accuracy=None, is_active=1,
+                 customer: str | None = None) -> dict:
+    """NPP (kiêm NVBH) tạo điểm bán trên ĐỊA BÀN của mình. distributor = NPP;
+    owner = user đang đăng nhập (điểm bán 'của nhân viên')."""
+    customer = require_customer(customer)
+    _require_salep()
+    point_name = (point_name or "").strip()
+    if not point_name:
+        frappe.throw(_("Vui lòng nhập tên điểm bán."))
+    p = frappe.new_doc("Display Point")
+    p.point_name = point_name
+    p.distributor = customer
+    if (address_line or "").strip():
+        p.address_line = address_line.strip()
+    if (phone or "").strip():
+        p.phone = phone.strip()
+    if latitude:
+        p.latitude = flt(latitude)
+    if longitude:
+        p.longitude = flt(longitude)
+    if gps_accuracy:
+        p.gps_accuracy = flt(gps_accuracy)
+    p.is_active = 1 if cint(is_active) else 0
+    p.flags.ignore_permissions = True
+    p.insert(ignore_permissions=True)
+    return {"name": p.name}
 
 
 def _own_point(point, customer):

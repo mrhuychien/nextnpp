@@ -95,7 +95,11 @@ function renderBody(d) {
 
         <!-- TAB Điểm bán -->
         <div id="npp-km-db" class="npp-km-tab" hidden>
-            <div class="npp-card"><h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
+            <div class="npp-card">
+                <div class="npp-flex npp-justify-between npp-items-center">
+                    <h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
+                    <button id="npp-km-addpoint" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm điểm bán</button>
+                </div>
                 ${points.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
                     <thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-center">Tham gia</th></tr></thead>
                     <tbody>${points.map((p) => `<tr class="npp-km-pointrow" data-n="${escapeHtml(p.name)}" style="cursor:pointer;">
@@ -168,6 +172,7 @@ function renderBody(d) {
         document.getElementById('npp-km-parts').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
     document.getElementById('npp-km-addstaff')?.addEventListener('click', openCreateStaff);
+    document.getElementById('npp-km-addpoint')?.addEventListener('click', openCreatePoint);
     document.querySelectorAll('.npp-km-staffrow').forEach((r) =>
         r.addEventListener('click', () => staffModal(r.dataset.n)));
     document.querySelectorAll('.npp-km-pointrow').forEach((r) =>
@@ -380,6 +385,58 @@ async function deletePoint(name, label) {
         closeModal(); showToast('Đã xoá điểm bán', 'success'); refresh();
     } catch (err) {
         showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+    }
+}
+
+function openCreatePoint() {
+    showModal({
+        title: '➕ Thêm điểm bán',
+        body: html`<div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="npp-cn-flabel">Tên điểm bán *</label><input id="pc-name" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">Địa chỉ</label><input id="pc-addr" class="npp-cn-input" style="width:100%;"></div>
+            <div><label class="npp-cn-flabel">Điện thoại</label><input id="pc-phone" class="npp-cn-input" style="width:100%;" inputmode="tel"></div>
+            <div class="npp-flex" style="gap:8px;">
+                <div style="flex:1;"><label class="npp-cn-flabel">Vĩ độ</label><input id="pc-lat" class="npp-cn-input" style="width:100%;" inputmode="decimal"></div>
+                <div style="flex:1;"><label class="npp-cn-flabel">Kinh độ</label><input id="pc-lng" class="npp-cn-input" style="width:100%;" inputmode="decimal"></div>
+            </div>
+            <button id="pc-gps" type="button" class="npp-cn-btn" style="padding:8px;">📍 Lấy vị trí hiện tại</button>
+            <label class="npp-flex npp-items-center" style="gap:8px;"><input id="pc-active" type="checkbox" checked> Đang hoạt động</label>
+            <button id="pc-save" type="button" class="npp-btn-primary" style="padding:10px;">Tạo điểm bán</button>
+            <p class="npp-text-sm npp-text-muted">Điểm bán được tạo trên địa bàn của bạn (như nhân viên bán hàng tạo).</p>
+        </div>`,
+    });
+    document.getElementById('pc-gps').addEventListener('click', captureGps);
+    document.getElementById('pc-save').addEventListener('click', savePointNew);
+}
+
+function captureGps() {
+    const btn = document.getElementById('pc-gps');
+    if (!navigator.geolocation) return showToast('Trình duyệt không hỗ trợ định vị', 'warning');
+    if (btn) { btn.disabled = true; btn.textContent = '📍 Đang lấy vị trí...'; }
+    navigator.geolocation.getCurrentPosition((pos) => {
+        const lat = document.getElementById('pc-lat'), lng = document.getElementById('pc-lng');
+        if (lat) lat.value = pos.coords.latitude.toFixed(8);
+        if (lng) lng.value = pos.coords.longitude.toFixed(8);
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Đã lấy vị trí'; }
+        showToast('Đã lấy vị trí hiện tại', 'success');
+    }, (err) => {
+        if (btn) { btn.disabled = false; btn.textContent = '📍 Lấy vị trí hiện tại'; }
+        showToast('Không lấy được vị trí: ' + ((err && err.message) || ''), 'error');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+async function savePointNew() {
+    const point_name = v('pc-name'), address_line = v('pc-addr'), phone = v('pc-phone'), latitude = v('pc-lat'), longitude = v('pc-lng');
+    const is_active = document.getElementById('pc-active')?.checked ? 1 : 0;
+    if (!point_name) return showToast('Nhập tên điểm bán', 'warning');
+    const btn = document.getElementById('pc-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang tạo...'; }
+    try {
+        await api.call('npp.api.promo.create_point', { point_name, address_line, phone, latitude, longitude, is_active });
+        closeModal(); showToast('Đã tạo điểm bán', 'success'); refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Tạo điểm bán'; }
     }
 }
 
