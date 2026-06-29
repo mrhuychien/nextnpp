@@ -1,6 +1,6 @@
 ---
 name: frappe-portal-spa
-description: Use when building or maintaining a customer-facing single-page-app (SPA) portal served from a Frappe/ERPNext v16 www page — a mobile-first vanilla-JS app (no bundler) with hash routing, code-split ES modules, lazy Chart.js, that runs INSIDE ERPNext's asset pipeline. Triggers include "portal cho NPP/khách hàng", "www page SPA", "trang self-service", "hash router", "code-split view", "ES module trên Frappe", "asset cache sau deploy", "does not provide an export named", "import map", "/assets bị cache 1 năm", "CSS đè Bootstrap ERPNext". Do NOT use for Frappe Desk client scripts / form scripts (use nextcode-build), for backend analytics methods (use frappe-sales-analytics), or for generic install/fixtures issues (use nextcode-build). This skill is about the browser-side portal architecture and its asset/cache/deploy discipline.
+description: Use when building or maintaining a customer-facing single-page-app (SPA) portal served from a Frappe/ERPNext v16 www page — a mobile-first vanilla-JS app (no bundler) with hash routing, code-split ES modules, lazy Chart.js, that runs INSIDE ERPNext's asset pipeline. Triggers include "portal cho NPP/khách hàng", "www page SPA", "trang self-service", "hash router", "code-split view", "ES module trên Frappe", "asset cache sau deploy", "does not provide an export named", "import map", "/assets bị cache 1 năm", "CSS đè Bootstrap ERPNext". Cũng dùng cho phong cách/giao diện portal — "phong cách thiết kế", "design system", "design token", "reskin/đổi theme portal", "season/đổi mùa", "component CSS", "mobile-first", "glassmorphism", "áp dụng giao diện cho portal khác" (xem references/design-system.md). Do NOT use for Frappe Desk client scripts / form scripts (use nextcode-build), for backend analytics methods (use frappe-sales-analytics), or for generic install/fixtures issues (use nextcode-build). This skill is about the browser-side portal architecture and its asset/cache/deploy discipline.
 ---
 
 # Frappe Portal SPA — kiến trúc & kỷ luật asset
@@ -51,6 +51,17 @@ Import map khớp theo **URL đã resolve** (path tuyệt đối, không query) 
 sang bản có `?v=`. View modules thì vẫn cache-bust riêng qua `assetVersion`
 (xem dưới); KHÔNG cho view vào import map (chúng đã mang `?v=` khi dynamic import).
 Chi tiết + cách liệt kê module: `references/cache-busting.md`.
+
+## Phong cách thiết kế (design system)
+
+Toàn bộ **ngôn ngữ thị giác + tương tác** (design token, hệ thống mùa, typography,
+layout shell, catalog ~24 component kèm CSS copy-paste, motion, responsive, port
+sang portal khác bằng 1 lệnh `sed`) gói trong **một file tự chứa**:
+`references/design-system.md`. Dùng khi dựng giao diện portal mới hoặc thêm
+component để giữ đúng phong cách (mobile-first, glass + nền mùa, card bo tròn,
+1 accent màu mùa, badge ngữ nghĩa). Quy tắc nền tảng: **prefix mọi class**, class
+mùa trên `.app` (không `body`), banner ép `color !important`, tải→skeleton /
+chặn→loading / kết quả→toast.
 
 ## Kiến trúc 1 phút
 
