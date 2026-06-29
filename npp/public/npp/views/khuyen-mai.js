@@ -12,6 +12,7 @@ import { showToast } from '../components/toast.js';
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
 let _staff = [];
+let _points = [];
 
 function bar(pct, color) {
     pct = Math.max(0, Math.min(100, pct || 0));
@@ -55,6 +56,7 @@ function renderBody(d) {
     const points = d.points || [];
     const staff = d.staff || [];
     _staff = staff;
+    _points = points;
 
     const apprRate = t.participations ? (t.approved / t.participations * 100) : 0;
     const coverage = t.active_points ? (t.participated_points / t.active_points * 100) : 0;
@@ -75,21 +77,18 @@ function renderBody(d) {
                     <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm nhân viên</button>
                 </div>
                 ${staff.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                    <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th><th></th></tr></thead>
+                    <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th></tr></thead>
                     <tbody>${staff.map((s) => {
                         const rate = s.total ? s.approved / s.total * 100 : 0;
-                        return `<tr>
+                        return `<tr class="${s.name ? 'npp-km-staffrow' : ''}" data-n="${escapeHtml(s.name || '')}" style="${s.name ? 'cursor:pointer;' : ''}">
                             <td data-label="Nhân viên"><strong>${escapeHtml(s.full_name)}</strong>${s.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(s.phone)}</div>` : ''}</td>
                             <td data-label="Trạng thái" class="npp-text-center">${s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>'}</td>
                             <td data-label="Lượt" class="npp-text-end">${formatNumber(s.total)}</td>
                             <td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(s.approved)}</strong></td>
                             <td data-label="Tỷ lệ">${rate.toFixed(0)}%${bar(rate, 'var(--npp-success)')}</td>
-                            <td class="npp-text-center" style="white-space:nowrap;">${s.name ? `
-                                <a href="javascript:void(0)" class="npp-link npp-km-edit" data-n="${escapeHtml(s.name)}">Sửa</a>
-                                · <a href="javascript:void(0)" class="npp-link npp-km-pass" data-n="${escapeHtml(s.name)}">Đổi MK</a>
-                                · <a href="javascript:void(0)" class="npp-link npp-km-toggle" data-n="${escapeHtml(s.name)}" data-a="${s.active ? 0 : 1}">${s.active ? 'Tạm dừng' : 'Kích hoạt'}</a>` : ''}</td>
                         </tr>`;
-                    }).join('')}</tbody></table></div>`
+                    }).join('')}</tbody></table></div>
+                    <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm vào nhân viên để xem / sửa / đổi MK / xoá.</p>`
                     : `<div class="npp-mt-2">${emptyState({ icon: '👥', title: 'Chưa có nhân viên', message: 'Bấm "Thêm nhân viên" để bắt đầu.' })}</div>`}
             </div>
         </div>
@@ -98,14 +97,14 @@ function renderBody(d) {
         <div id="npp-km-db" class="npp-km-tab" hidden>
             <div class="npp-card"><h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
                 ${points.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                    <thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-center">Tham gia</th><th></th></tr></thead>
-                    <tbody>${points.map((p) => `<tr>
+                    <thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-center">Tham gia</th></tr></thead>
+                    <tbody>${points.map((p) => `<tr class="npp-km-pointrow" data-n="${escapeHtml(p.name)}" style="cursor:pointer;">
                         <td data-label="Điểm bán"><strong>${escapeHtml(p.point_name || p.name)}</strong>${p.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(p.phone)}</div>` : ''}</td>
                         <td data-label="Địa chỉ" class="npp-text-sm">${escapeHtml(p.address_line || '—')}</td>
                         <td data-label="Trạng thái" class="npp-text-center">${p.is_active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Ngừng</span>'}</td>
                         <td data-label="Tham gia" class="npp-text-center">${p.participated ? '✅' : '—'}</td>
-                        <td class="npp-text-center">${gpsLink(p.latitude, p.longitude)}</td>
-                    </tr>`).join('')}</tbody></table></div>`
+                    </tr>`).join('')}</tbody></table></div>
+                    <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm vào điểm bán để xem / sửa / xoá.</p>`
                     : `<div class="npp-mt-2">${emptyState({ icon: '🏪', title: 'Chưa có điểm bán' })}</div>`}
             </div>
         </div>
@@ -169,12 +168,10 @@ function renderBody(d) {
         document.getElementById('npp-km-parts').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
     document.getElementById('npp-km-addstaff')?.addEventListener('click', openCreateStaff);
-    document.querySelectorAll('.npp-km-toggle').forEach((b) =>
-        b.addEventListener('click', () => toggleStaff(b.dataset.n, b.dataset.a)));
-    document.querySelectorAll('.npp-km-edit').forEach((a) =>
-        a.addEventListener('click', () => openEditStaff(a.dataset.n)));
-    document.querySelectorAll('.npp-km-pass').forEach((a) =>
-        a.addEventListener('click', () => resetPass(a.dataset.n)));
+    document.querySelectorAll('.npp-km-staffrow').forEach((r) =>
+        r.addEventListener('click', () => staffModal(r.dataset.n)));
+    document.querySelectorAll('.npp-km-pointrow').forEach((r) =>
+        r.addEventListener('click', () => pointModal(r.dataset.n)));
 }
 
 function switchKmTab(t) {
@@ -276,8 +273,111 @@ async function copyText(text, btnId) {
 async function toggleStaff(name, active) {
     try {
         await api.call('npp.api.promo.set_staff_active', { staff: name, active });
+        closeModal();
         showToast(Number(active) ? 'Đã kích hoạt nhân viên' : 'Đã tạm dừng nhân viên', 'success');
         refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+    }
+}
+
+function staffModal(name) {
+    if (!name) return;
+    const s = _staff.find((x) => x.name === name);
+    if (!s) return;
+    const rate = s.total ? (s.approved / s.total * 100) : 0;
+    showModal({
+        title: '👤 ' + (s.full_name || ''),
+        body: html`
+            <div class="npp-card" style="margin-top:0;">
+                <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Đăng nhập (SĐT)</span><strong>${escapeHtml(s.phone || '—')}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Trạng thái</span>${s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>'}</div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Lượt tham gia</span><strong>${formatNumber(s.total)}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Đã duyệt</span><strong style="color:var(--npp-success);">${formatNumber(s.approved)} (${rate.toFixed(0)}%)</strong></div>
+            </div>
+            <div class="npp-flex npp-flex-wrap" style="gap:8px;margin-top:10px;">
+                <button id="sm-edit" type="button" class="npp-btn-primary" style="flex:1;min-width:90px;padding:9px;">✏️ Sửa</button>
+                <button id="sm-pass" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:9px;">🔑 Đổi MK</button>
+                <button id="sm-toggle" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:9px;">${s.active ? '⏸ Tạm dừng' : '▶ Kích hoạt'}</button>
+                <button id="sm-del" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:9px;color:var(--npp-danger);">🗑 Xoá</button>
+            </div>`,
+    });
+    document.getElementById('sm-edit').addEventListener('click', () => openEditStaff(name));
+    document.getElementById('sm-pass').addEventListener('click', () => resetPass(name));
+    document.getElementById('sm-toggle').addEventListener('click', () => toggleStaff(name, s.active ? 0 : 1));
+    document.getElementById('sm-del').addEventListener('click', () => deleteStaff(name, s.full_name));
+}
+
+async function deleteStaff(name, label) {
+    if (!window.confirm(`Xoá nhân viên "${label || ''}"?\nTài khoản đăng nhập sẽ bị vô hiệu hoá.`)) return;
+    try {
+        await api.call('npp.api.promo.delete_staff', { staff: name });
+        closeModal();
+        showToast('Đã xoá nhân viên', 'success');
+        refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+    }
+}
+
+function pointModal(name) {
+    const p = _points.find((x) => x.name === name);
+    if (!p) return;
+    showModal({
+        title: '🏪 ' + (p.point_name || p.name),
+        body: html`
+            <div class="npp-card" style="margin-top:0;">
+                <div class="npp-flex npp-justify-between" style="gap:10px;"><span class="npp-text-muted">Địa chỉ</span><strong style="text-align:right;">${escapeHtml(p.address_line || '—')}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Điện thoại</span><strong>${escapeHtml(p.phone || '—')}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Trạng thái</span>${p.is_active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Ngừng</span>'}</div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Đã tham gia CT</span><strong>${p.participated ? 'Có' : 'Chưa'}</strong></div>
+                ${(p.latitude && p.longitude) ? `<div class="npp-mt-2"><a href="https://www.google.com/maps?q=${p.latitude},${p.longitude}" target="_blank" rel="noopener" class="npp-link">📍 Mở bản đồ</a></div>` : ''}
+            </div>
+            <div class="npp-flex npp-flex-wrap" style="gap:8px;margin-top:10px;">
+                <button id="pm-edit" type="button" class="npp-btn-primary" style="flex:1;padding:9px;">✏️ Sửa</button>
+                <button id="pm-del" type="button" class="npp-cn-btn" style="flex:1;padding:9px;color:var(--npp-danger);">🗑 Xoá</button>
+            </div>`,
+    });
+    document.getElementById('pm-edit').addEventListener('click', () => openEditPoint(name));
+    document.getElementById('pm-del').addEventListener('click', () => deletePoint(name, p.point_name || p.name));
+}
+
+function openEditPoint(name) {
+    const p = _points.find((x) => x.name === name);
+    if (!p) return;
+    showModal({
+        title: '✏️ Sửa điểm bán',
+        body: html`<div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="npp-cn-flabel">Tên điểm bán *</label><input id="pe-name" class="npp-cn-input" style="width:100%;" value="${escapeHtml(p.point_name || '')}"></div>
+            <div><label class="npp-cn-flabel">Địa chỉ</label><input id="pe-addr" class="npp-cn-input" style="width:100%;" value="${escapeHtml(p.address_line || '')}"></div>
+            <div><label class="npp-cn-flabel">Điện thoại</label><input id="pe-phone" class="npp-cn-input" style="width:100%;" inputmode="tel" value="${escapeHtml(p.phone || '')}"></div>
+            <label class="npp-flex npp-items-center" style="gap:8px;"><input id="pe-active" type="checkbox" ${p.is_active ? 'checked' : ''}> Đang hoạt động</label>
+            <button id="pe-save" type="button" class="npp-btn-primary" style="padding:10px;">Lưu</button>
+        </div>`,
+    });
+    document.getElementById('pe-save').addEventListener('click', () => savePoint(name));
+}
+
+async function savePoint(name) {
+    const point_name = v('pe-name'), address_line = v('pe-addr'), phone = v('pe-phone');
+    const is_active = document.getElementById('pe-active')?.checked ? 1 : 0;
+    if (!point_name) return showToast('Nhập tên điểm bán', 'warning');
+    const btn = document.getElementById('pe-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang lưu...'; }
+    try {
+        await api.call('npp.api.promo.update_point', { point: name, point_name, address_line, phone, is_active });
+        closeModal(); showToast('Đã cập nhật điểm bán', 'success'); refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Lưu'; }
+    }
+}
+
+async function deletePoint(name, label) {
+    if (!window.confirm(`Xoá điểm bán "${label || ''}"?\nKhông xoá được nếu đã có lượt tham gia.`)) return;
+    try {
+        await api.call('npp.api.promo.delete_point', { point: name });
+        closeModal(); showToast('Đã xoá điểm bán', 'success'); refresh();
     } catch (err) {
         showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
     }

@@ -286,3 +286,56 @@ def reset_staff_password(staff: str, password: str | None = None, customer: str 
     u.flags.ignore_permissions = True
     u.save(ignore_permissions=True)
     return {"name": staff, "username": u.username or u.name, "password": password}
+
+
+@frappe.whitelist()
+def delete_staff(staff: str, customer: str | None = None) -> dict:
+    """Xoá hồ sơ nhân viên khỏi địa bàn NPP + VÔ HIỆU HOÁ tài khoản đăng nhập (không
+    hard-delete User để giữ lịch sử tham gia do user đó tạo)."""
+    customer = require_customer(customer)
+    _require_salep()
+    prof = _own_staff(staff, customer)
+    user = prof.get("user")
+    frappe.delete_doc("Sales Staff Profile", staff, ignore_permissions=True)
+    if user and frappe.db.exists("User", user):
+        frappe.db.set_value("User", user, "enabled", 0)
+    return {"name": staff}
+
+
+def _own_point(point, customer):
+    owner = frappe.db.get_value("Display Point", point, "distributor")
+    if owner != customer:
+        frappe.throw(_("Không có quyền với điểm bán này."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def update_point(point: str, point_name: str | None = None, address_line: str | None = None,
+                 phone: str | None = None, is_active=None, customer: str | None = None) -> dict:
+    """Sửa thông tin điểm bán (tên/địa chỉ/SĐT/hoạt động) — chỉ điểm bán của NPP."""
+    customer = require_customer(customer)
+    _require_salep()
+    _own_point(point, customer)
+    p = frappe.get_doc("Display Point", point)
+    if point_name and point_name.strip():
+        p.point_name = point_name.strip()
+    if address_line is not None:
+        p.address_line = address_line.strip() or None
+    if phone is not None:
+        p.phone = phone.strip() or None
+    if is_active is not None:
+        p.is_active = 1 if cint(is_active) else 0
+    p.flags.ignore_permissions = True
+    p.save(ignore_permissions=True)
+    return {"name": point}
+
+
+@frappe.whitelist()
+def delete_point(point: str, customer: str | None = None) -> dict:
+    """Xoá điểm bán — chặn nếu đã có lượt tham gia (gợi ý ngừng hoạt động thay vì xoá)."""
+    customer = require_customer(customer)
+    _require_salep()
+    _own_point(point, customer)
+    if frappe.db.exists("Display Participation", {"display_point": point}):
+        frappe.throw(_("Không thể xoá: điểm bán đã có lượt tham gia. Hãy chuyển 'Ngừng hoạt động' thay vì xoá."))
+    frappe.delete_doc("Display Point", point, ignore_permissions=True)
+    return {"name": point}
