@@ -194,8 +194,13 @@ def create_staff(full_name: str, phone: str | None = None, email: str | None = N
     u.new_password = password    # đặt mật khẩu ngay khi tạo
     u.flags.ignore_permissions = True
     u.insert(ignore_permissions=True)
+    # Role NVBH chỉ dùng portal → TẮT desk_access. Nếu không, User.set_system_user()
+    # sẽ ép user_type='System User' (vì role có desk_access) và NV vào được Desk.
     if frappe.db.exists("Role", SALES_STAFF_ROLE):
+        if frappe.db.get_value("Role", SALES_STAFF_ROLE, "desk_access"):
+            frappe.db.set_value("Role", SALES_STAFF_ROLE, "desk_access", 0)
         u.add_roles(SALES_STAFF_ROLE)  # CHỈ role Sales Staff
+    frappe.db.set_value("User", email, "user_type", "Website User")  # ép Website User → chặn Desk
 
     p = frappe.new_doc("Sales Staff Profile")
     p.user = email
