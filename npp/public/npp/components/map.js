@@ -15,26 +15,33 @@ let leafletPromise = null;
 // chặn stylesheet ngoài (script CDN qua được nhưng CSS bị chặn → tile vỡ + mất nút
 // zoom vì leaflet.css không áp dụng). Phục vụ từ /assets nên không phụ thuộc mạng ngoài.
 const LEAFLET_BASE = '/assets/npp/npp/vendor/leaflet';
+const CSS_ID = 'npp-leaflet-vendor-css';   // id RIÊNG: không đụng <link> CDN cũ (bị CSP chặn)
+
+// Đảm bảo leaflet.css (vendor, same-origin) có mặt — kể cả khi window.L đã được nạp
+// từ phiên trước (vd bản CDN cũ): nếu thiếu CSS, pane/tile mất position:absolute →
+// vỡ thành khảm rời rạc + mất nút zoom. Resolve khi CSS áp dụng xong (có timeout).
+function ensureCss() {
+    if (document.getElementById(CSS_ID)) return Promise.resolve();
+    return new Promise((res) => {
+        const link = document.createElement('link');
+        link.id = CSS_ID;
+        link.rel = 'stylesheet';
+        link.href = `${LEAFLET_BASE}/leaflet.css`;
+        link.onload = res;
+        link.onerror = res;           // vẫn tiếp tục, đừng treo
+        document.head.appendChild(link);
+        setTimeout(res, 3000);        // chốt chặn timeout
+    });
+}
 
 export function loadLeaflet() {
-    if (window.L) return Promise.resolve(window.L);
+    if (window.L) return ensureCss().then(() => window.L);   // L sẵn → vẫn nạp CSS vendor
     if (leafletPromise) return leafletPromise;
     leafletPromise = new Promise((resolve, reject) => {
-        // PHẢI chờ CSS áp dụng XONG rồi mới resolve: nếu render map khi chưa có
-        // leaflet.css thì pane/tile không được position:absolute → khảm rời rạc.
-        const cssReady = new Promise((res) => {
-            if (document.getElementById('npp-leaflet-css')) return res();
-            const link = document.createElement('link');
-            link.id = 'npp-leaflet-css';
-            link.rel = 'stylesheet';
-            link.href = `${LEAFLET_BASE}/leaflet.css`;
-            link.onload = res;
-            link.onerror = res;           // vẫn tiếp tục, đừng treo
-            document.head.appendChild(link);
-            setTimeout(res, 3000);        // chốt chặn timeout
-        });
+        const cssReady = ensureCss();
         const s = document.createElement('script');
         s.src = `${LEAFLET_BASE}/leaflet.js`;
+        // Chờ CẢ css áp dụng rồi mới resolve → tile không bao giờ render trước CSS.
         s.onload = () => cssReady.then(() => (window.L ? resolve(window.L) : reject(new Error('Leaflet không khả dụng'))));
         s.onerror = () => { leafletPromise = null; reject(new Error('Không tải được thư viện bản đồ.')); };
         document.head.appendChild(s);
