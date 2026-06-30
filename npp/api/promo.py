@@ -148,6 +148,69 @@ def npp_participations(program: str | None = None, customer: str | None = None) 
     return rows
 
 
+@frappe.whitelist()
+def npp_point_detail(point: str, customer: str | None = None) -> dict:
+    """Chi tiết + activity của 1 điểm bán thuộc NPP (modal): thông tin, ảnh điểm bán
+    + ảnh các lượt trưng bày, danh sách chương trình đã tham gia."""
+    customer = require_customer(customer)
+    _require_salep()
+    p = frappe.db.get_value(
+        "Display Point", point,
+        ["name", "point_name", "address_line", "phone", "latitude", "longitude",
+         "is_active", "store_photo", "distributor", "creation"], as_dict=True)
+    if not p or p.get("distributor") != customer:
+        frappe.throw(_("Không tìm thấy điểm bán"))
+    pg = {r["name"]: r["program_name"] for r in frappe.get_all("Promotion Program", fields=["name", "program_name"])}
+    parts = frappe.get_all(
+        "Display Participation", filters={"display_point": point, "distributor": customer},
+        fields=["name", "promotion_program", "workflow_state", "display_photo", "modified"],
+        order_by="modified desc")
+    activity = [{"name": x["name"], "program": pg.get(x["promotion_program"]) or x["promotion_program"],
+                 "workflow_state": x.get("workflow_state"), "display_photo": x.get("display_photo"),
+                 "date": str(x["modified"]) if x.get("modified") else None} for x in parts]
+    images = []
+    if p.get("store_photo"):
+        images.append({"label": "Ảnh điểm bán", "url": p["store_photo"]})
+    for a in activity:
+        if a.get("display_photo"):
+            images.append({"label": "Ảnh trưng bày · " + (a["program"] or ""), "url": a["display_photo"]})
+    return {
+        "point": {**p, "is_active": bool(p.get("is_active")),
+                  "creation": str(p.get("creation")) if p.get("creation") else None},
+        "activity": activity, "images": images,
+        "stats": {"participations": len(parts),
+                  "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
+                  "programs": len({x["promotion_program"] for x in parts if x.get("promotion_program")})},
+    }
+
+
+@frappe.whitelist()
+def npp_participation_detail(name: str, customer: str | None = None) -> dict:
+    """Chi tiết 1 lượt tham gia của NPP: thông tin điểm bán + chương trình + hình ảnh
+    trưng bày của lượt đó (cho modal ở tab Chương trình)."""
+    customer = require_customer(customer)
+    _require_salep()
+    p = frappe.db.get_value(
+        "Display Participation", name,
+        ["name", "display_point", "promotion_program", "distributor", "display_photo",
+         "workflow_state", "reject_reason", "latitude", "longitude", "modified"], as_dict=True)
+    if not p or p.get("distributor") != customer:
+        frappe.throw(_("Không tìm thấy lượt tham gia"))
+    pt = frappe.db.get_value("Display Point", p["display_point"],
+                             ["point_name", "address_line", "phone", "store_photo", "is_active"], as_dict=True) or {}
+    pg = frappe.db.get_value("Promotion Program", p["promotion_program"],
+                             ["program_name", "status", "start_date", "end_date"], as_dict=True) or {}
+    images = [{"label": "Ảnh trưng bày (chương trình)", "url": p.get("display_photo")},
+              {"label": "Ảnh điểm bán", "url": pt.get("store_photo")}]
+    return {
+        "participation": {**p, "modified": str(p["modified"]) if p.get("modified") else None},
+        "point": pt,
+        "program": {**pg, "start_date": str(pg.get("start_date")) if pg.get("start_date") else None,
+                    "end_date": str(pg.get("end_date")) if pg.get("end_date") else None},
+        "images": [im for im in images if im["url"]],
+    }
+
+
 def _gen_password(n: int = 8) -> str:
     """Mật khẩu ngẫu nhiên có cả chữ thường/hoa/số (đủ mạnh cho policy mặc định)."""
     import random

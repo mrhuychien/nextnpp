@@ -20,9 +20,6 @@ function bar(pct, color) {
     return `<div style="height:6px;background:var(--npp-surface-2);border-radius:4px;overflow:hidden;margin-top:4px;">
         <div style="width:${pct}%;height:100%;background:${color};"></div></div>`;
 }
-function gpsLink(lat, lng) {
-    return (lat && lng) ? `<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener" class="npp-link">📍</a>` : '';
-}
 
 export async function render({ container }) {
     container.innerHTML = html`
@@ -354,26 +351,46 @@ async function deleteStaff(name, label) {
     }
 }
 
-function pointModal(name) {
-    const p = _points.find((x) => x.name === name);
-    if (!p) return;
+async function pointModal(name) {
+    showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:240px;"></div>' });
+    let d;
+    try {
+        d = await api.call('npp.api.promo.npp_point_detail', { point: name });
+    } catch (err) {
+        showModal({ title: '⚠️ Lỗi', body: `<div class="npp-text-muted">${escapeHtml((err && err.message) || '')}</div>` });
+        return;
+    }
+    const p = d.point || {}, st = d.stats || {}, acts = d.activity || [], imgs = d.images || [];
+    const imgGrid = imgs.length
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
+        : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
     showModal({
-        title: '🏪 ' + (p.point_name || p.name),
+        title: '🏪 ' + escapeHtml(p.point_name || name),
         body: html`
             <div class="npp-card" style="margin-top:0;">
                 <div class="npp-flex npp-justify-between" style="gap:10px;"><span class="npp-text-muted">Địa chỉ</span><strong style="text-align:right;">${escapeHtml(p.address_line || '—')}</strong></div>
                 <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Điện thoại</span><strong>${escapeHtml(p.phone || '—')}</strong></div>
                 <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Trạng thái</span>${p.is_active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Ngừng</span>'}</div>
-                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Đã tham gia CT</span><strong>${p.participated ? 'Có' : 'Chưa'}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Ngày tạo</span><strong>${p.creation ? formatDate(p.creation) : '—'}</strong></div>
                 ${(p.latitude && p.longitude) ? `<div class="npp-mt-2"><a href="https://www.google.com/maps?q=${p.latitude},${p.longitude}" target="_blank" rel="noopener" class="npp-link">📍 Mở bản đồ</a></div>` : ''}
             </div>
-            <div class="npp-flex npp-flex-wrap" style="gap:8px;margin-top:10px;">
+            <div class="npp-kpi-grid npp-mt-3">
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Lượt tham gia</div><div class="npp-kpi-value">${formatNumber(st.participations || 0)}</div></div>
+                <div class="npp-kpi-card"><div class="npp-kpi-label">Đã duyệt</div><div class="npp-kpi-value">${formatNumber(st.approved || 0)}</div><div class="npp-kpi-sub">${formatNumber(st.programs || 0)} chương trình</div></div>
+            </div>
+            <h4 class="npp-font-bold npp-mt-3">Hình ảnh</h4>
+            <div class="npp-mt-2">${imgGrid}</div>
+            <h4 class="npp-font-bold npp-mt-3">Chương trình đã tham gia (${acts.length})</h4>
+            ${acts.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
+                <tbody>${acts.map((a) => `<tr><td data-label="Chương trình">${escapeHtml(a.program || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[a.workflow_state] || 'muted'}">${escapeHtml(a.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${a.date ? formatDate(a.date) : ''}</td></tr>`).join('')}</tbody></table></div>`
+                : '<div class="npp-text-muted npp-mt-2">Chưa tham gia chương trình nào</div>'}
+            <div class="npp-flex npp-flex-wrap" style="gap:8px;margin-top:12px;">
                 <button id="pm-edit" type="button" class="npp-btn-primary" style="flex:1;padding:9px;">✏️ Sửa</button>
                 <button id="pm-del" type="button" class="npp-cn-btn" style="flex:1;padding:9px;color:var(--npp-danger);">🗑 Xoá</button>
             </div>`,
     });
     document.getElementById('pm-edit').addEventListener('click', () => openEditPoint(name));
-    document.getElementById('pm-del').addEventListener('click', () => deletePoint(name, p.point_name || p.name));
+    document.getElementById('pm-del').addEventListener('click', () => deletePoint(name, p.point_name || name));
 }
 
 function openEditPoint(name) {
@@ -492,17 +509,45 @@ async function loadParticipations(program) {
             <div id="npp-km-partsmap" class="npp-map-wrap" style="margin-top:0;"></div>
             <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Đã duyệt</span><span><i style="background:#f59e0b;"></i>Chờ duyệt</span><span><i style="background:#94a3b8;"></i>Từ chối</span></div>
             <div style="overflow-x:auto;" class="npp-mt-3"><table class="npp-table">
-            <thead><tr><th>Điểm bán</th><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Cập nhật</th><th></th></tr></thead>
-            <tbody>${rows.map((r) => `<tr>
+            <thead><tr><th>Điểm bán</th><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Cập nhật</th></tr></thead>
+            <tbody>${rows.map((r) => `<tr class="npp-km-partrow" data-n="${escapeHtml(r.name)}" style="cursor:pointer;">
                 <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name)}</strong></td>
                 <td data-label="Chương trình" class="npp-text-sm">${escapeHtml(r.program_name)}</td>
                 <td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[r.workflow_state] || 'muted'}">${escapeHtml(r.workflow_state || '—')}</span>${r.workflow_state === 'Từ chối' && r.reject_reason ? `<div class="npp-text-sm npp-text-muted" title="${escapeHtml(r.reject_reason)}">lý do…</div>` : ''}</td>
                 <td data-label="Cập nhật" class="npp-text-sm">${r.modified ? formatDate(r.modified) : ''}</td>
-                <td class="npp-text-center">${gpsLink(r.latitude, r.longitude)}</td>
             </tr>`).join('')}</tbody></table></div>
-            <div class="npp-text-sm npp-text-muted npp-mt-2">${rows.length} lượt tham gia</div>`;
+            <div class="npp-text-sm npp-text-muted npp-mt-2">${rows.length} lượt tham gia · bấm 1 dòng để xem chi tiết + hình ảnh</div>`;
         renderPointsMap(document.getElementById('npp-km-partsmap'), mapPts);
+        root.querySelectorAll('.npp-km-partrow').forEach((tr) => tr.addEventListener('click', () => participationDetailModal(tr.dataset.n)));
     } catch (err) {
         root.innerHTML = `<div class="npp-text-muted">${escapeHtml((err && err.message) || 'Lỗi')}</div>`;
+    }
+}
+
+async function participationDetailModal(name) {
+    showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:240px;"></div>' });
+    try {
+        const d = await api.call('npp.api.promo.npp_participation_detail', { name });
+        const p = d.participation || {}, pt = d.point || {}, pg = d.program || {}, imgs = d.images || [];
+        const imgGrid = imgs.length
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
+            : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
+        showModal({
+            title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
+            body: html`
+                <div class="npp-card" style="margin-top:0;">
+                    <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Chương trình</span><strong style="text-align:right;">${escapeHtml(pg.program_name || '')}</strong></div>
+                    <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Trạng thái</span><span class="npp-badge npp-badge-${WF_BADGE[p.workflow_state] || 'muted'}">${escapeHtml(p.workflow_state || '—')}</span></div>
+                    <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Địa chỉ</span><strong style="text-align:right;">${escapeHtml(pt.address_line || '—')}</strong></div>
+                    <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Điện thoại</span><strong>${escapeHtml(pt.phone || '—')}</strong></div>
+                    <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Cập nhật</span><strong>${p.modified ? formatDate(p.modified) : '—'}</strong></div>
+                    ${p.reject_reason ? `<div class="npp-mt-2 npp-text-sm" style="color:var(--npp-danger);">Lý do từ chối: ${escapeHtml(p.reject_reason)}</div>` : ''}
+                    ${(p.latitude && p.longitude) ? `<div class="npp-mt-2"><a href="https://www.google.com/maps?q=${p.latitude},${p.longitude}" target="_blank" rel="noopener" class="npp-link">📍 Mở bản đồ</a></div>` : ''}
+                </div>
+                <h4 class="npp-font-bold npp-mt-3">Hình ảnh tham gia</h4>
+                <div class="npp-mt-2">${imgGrid}</div>`,
+        });
+    } catch (err) {
+        showModal({ title: '⚠️ Lỗi', body: `<div class="npp-text-muted">${escapeHtml((err && err.message) || '')}</div>` });
     }
 }

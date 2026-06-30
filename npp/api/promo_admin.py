@@ -191,7 +191,8 @@ def program_detail(program: str) -> dict:
         if p.get("display_point"):
             b["pts"].add(p["display_point"])
         o = p.get("owner") or "—"
-        bs = by_staff_map.setdefault(o, {"user": o, "full_name": sn.get(o, o), "total": 0, "approved": 0})
+        bs = by_staff_map.setdefault(o, {"user": o, "full_name": sn.get(o, o),
+                                         "distributor": p.get("distributor"), "total": 0, "approved": 0})
         bs["total"] += 1
         if st == APPROVED:
             b["approved"] += 1
@@ -207,6 +208,8 @@ def program_detail(program: str) -> dict:
                        "active_points": tot, "coverage_pct": (len(b["appr_pts"]) / tot * 100) if tot else 0})
     by_npp.sort(key=lambda x: x["approved"], reverse=True)
     by_staff = sorted(by_staff_map.values(), key=lambda x: x["approved"], reverse=True)
+    for x in by_staff:   # nhãn NPP của nhân viên (theo distributor của lượt tham gia)
+        x["customer_name"] = cn.get(x.get("distributor")) or x.get("distributor") or "—"
 
     total_active = sum(npp_active.values())
     participated = len({p["display_point"] for p in parts if p.get("display_point")})
@@ -356,3 +359,70 @@ def state_summary() -> dict:
     return {"total": total, "by_state": counts,
             "points": frappe.db.count("Display Point"),
             "programs": frappe.db.count("Promotion Program")}
+
+
+@frappe.whitelist()
+def point_detail(name: str) -> dict:
+    """Chi tiết 1 điểm bán + lịch sử tham gia (cho modal ở tab Điểm bán)."""
+    _guard()
+    _require_salep()
+    p = frappe.db.get_value(
+        "Display Point", name,
+        ["name", "point_name", "address_line", "phone", "latitude", "longitude",
+         "is_active", "distributor", "creation"], as_dict=True)
+    if not p:
+        frappe.throw(_("Không tìm thấy điểm bán"))
+    cn = _cust_names([p.get("distributor")])
+    sn = _staff_names()
+    pg = _program_names()
+    parts = frappe.get_all("Display Participation", filters={"display_point": name},
+                           fields=["name", "promotion_program", "workflow_state", "owner", "modified"],
+                           order_by="modified desc")
+    activity = [{"name": x["name"], "program": pg.get(x["promotion_program"]) or x["promotion_program"],
+                 "workflow_state": x.get("workflow_state"), "staff": sn.get(x.get("owner")) or x.get("owner"),
+                 "date": str(x["modified"]) if x.get("modified") else None} for x in parts]
+    return {
+        "point": {**p, "is_active": bool(p.get("is_active")),
+                  "creation": str(p.get("creation")) if p.get("creation") else None,
+                  "npp": cn.get(p.get("distributor")) or p.get("distributor")},
+        "activity": activity,
+        "stats": {"participations": len(parts),
+                  "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
+                  "programs": len({x["promotion_program"] for x in parts if x.get("promotion_program")})},
+    }
+
+
+@frappe.whitelist()
+def staff_detail(name: str) -> dict:
+    """Chi tiết 1 nhân viên (Sales Staff Profile) + lịch sử tham gia (cho modal)."""
+    _guard()
+    _require_salep()
+    s = frappe.db.get_value(
+        "Sales Staff Profile", name,
+        ["name", "user", "full_name", "phone", "cccd", "distributor", "creation"], as_dict=True)
+    if not s:
+        frappe.throw(_("Không tìm thấy nhân viên"))
+    cn = _cust_names([s.get("distributor")])
+    enabled, last_login = 1, None
+    if s.get("user"):
+        u = frappe.db.get_value("User", s["user"], ["enabled", "last_login"], as_dict=True) or {}
+        enabled, last_login = u.get("enabled", 1), u.get("last_login")
+    pg = _program_names()
+    ptn = _point_names()
+    parts = frappe.get_all("Display Participation", filters={"owner": s.get("user")},
+                           fields=["name", "display_point", "promotion_program", "workflow_state", "modified"],
+                           order_by="modified desc") if s.get("user") else []
+    activity = [{"name": x["name"], "point": ptn.get(x["display_point"]) or x["display_point"],
+                 "program": pg.get(x["promotion_program"]) or x["promotion_program"],
+                 "workflow_state": x.get("workflow_state"),
+                 "date": str(x["modified"]) if x.get("modified") else None} for x in parts]
+    return {
+        "staff": {**s, "active": bool(enabled),
+                  "creation": str(s.get("creation")) if s.get("creation") else None,
+                  "last_login": str(last_login) if last_login else None,
+                  "npp": cn.get(s.get("distributor")) or s.get("distributor")},
+        "activity": activity,
+        "stats": {"participations": len(parts),
+                  "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
+                  "points": len({x["display_point"] for x in parts if x.get("display_point")})},
+    }
