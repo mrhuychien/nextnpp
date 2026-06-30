@@ -2,6 +2,7 @@ import { html } from '../lib/dom.js';
 import { formatCurrency, formatNumber, formatVNDShort, escapeHtml } from '../lib/format.js';
 import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
+import { salesMatrixHtml } from '../components/sales-matrix.js';
 
 // ─── Dashboard QUẢN LÝ KÊNH (Phase 1: điều hành + phân tích NPP) ──────────
 // Quyền do server kiểm (npp.api.manager.* → role quản lý).
@@ -62,6 +63,8 @@ export async function render({ container }) {
         <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Top 10 NPP theo doanh số</h3>
             <div class="npp-chart-wrap"><canvas id="npp-ql-top"></canvas></div></div>
 
+        <div id="npp-ql-matrix" class="npp-mt-3"><div class="npp-skeleton" style="height:240px;"></div></div>
+
         <div class="npp-grid-2 npp-mt-3">
             <div class="npp-card"><h3 class="npp-font-bold">Phân khúc vòng đời NPP</h3><div id="npp-ql-seg" class="npp-mt-2"></div></div>
             <div class="npp-card"><h3 class="npp-font-bold">Mức độ tập trung (Pareto)</h3><div id="npp-ql-conc" class="npp-mt-2"></div></div>
@@ -82,6 +85,20 @@ export async function render({ container }) {
     ['npp-ql-search', 'npp-ql-f-rank', 'npp-ql-f-seg'].forEach((id) =>
         document.getElementById(id).addEventListener('input', applyFilters));
     await loadData(3);
+    loadMatrix();   // bảng DS theo tháng — theo năm tài chính, không phụ thuộc bộ lọc kỳ
+}
+
+// Bảng doanh số từng NPP theo từng tháng (năm tài chính). Tải 1 lần, độc lập với
+// dropdown kỳ ở trên (kỳ chỉ ảnh hưởng KPI/biểu đồ).
+async function loadMatrix() {
+    const root = document.getElementById('npp-ql-matrix');
+    if (!root) return;
+    try {
+        const d = await api.call('npp.api.manager.sales_matrix');
+        root.innerHTML = salesMatrixHtml(d, { showKpis: false, title: 'Doanh số từng NPP theo tháng', showMeta: true });
+    } catch (err) {
+        root.innerHTML = `<div class="npp-card"><div class="npp-text-muted">Không tải được bảng doanh số tháng: ${escapeHtml(err.message)}</div></div>`;
+    }
 }
 
 async function loadData(months) {
