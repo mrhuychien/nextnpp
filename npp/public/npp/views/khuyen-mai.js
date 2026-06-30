@@ -6,6 +6,7 @@ import { emptyState } from '../components/empty-state.js';
 import { showModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import { renderPointsMap, refreshMap } from '../components/map.js';
+import { renderQR } from '../components/qr.js';
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
@@ -251,9 +252,18 @@ async function saveStaff() {
 function showCredentials(r) {
     const uname = r.username || '';
     const pw = r.password || '';
-    const baseUrl = window.NPP_CONTEXT?.baseUrl || '';
-    const msg = `Tài khoản đăng nhập${baseUrl ? ' (' + baseUrl + ')' : ''}:\n`
-        + `Tên đăng nhập (SĐT): ${uname}\nMật khẩu: ${pw}`;
+    const baseUrl = (window.NPP_CONTEXT?.baseUrl || '').replace(/\/+$/, '');
+    const appUrl = baseUrl + '/dp';
+    // QR trỏ tới trang tự đăng nhập (đọc tài khoản/mật khẩu từ #hash → không vào log
+    // server). Quét bằng camera điện thoại sẽ mở trình duyệt NGOÀI, không kẹt webview Zalo.
+    const qrUrl = `${baseUrl}/staff-login#u=${encodeURIComponent(uname)}&p=${encodeURIComponent(pw)}`;
+    // Mỗi dòng tách bạch; URL đứng RIÊNG 1 dòng, KHÔNG bọc ngoặc → dán vào Zalo link
+    // không bị dính ký tự ")" làm hỏng liên kết.
+    const msg = `Tài khoản đăng nhập app nhân viên:
+Tên đăng nhập (SĐT): ${uname}
+Mật khẩu: ${pw}
+Mở app:
+${appUrl}`;
     showModal({
         title: '✅ Đã tạo nhân viên',
         body: html`
@@ -262,14 +272,29 @@ function showCredentials(r) {
                 <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Tên đăng nhập (SĐT)</span><strong style="user-select:all;">${escapeHtml(uname)}</strong></div>
                 <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Mật khẩu</span><strong style="user-select:all;">${escapeHtml(pw)}</strong></div>
             </div>
+            <div class="npp-card npp-text-center" style="margin-top:10px;">
+                <div class="npp-text-sm npp-font-bold">📷 Mã QR đăng nhập nhanh</div>
+                <div id="nv-qr" class="npp-flex npp-items-center" style="justify-content:center;min-height:180px;margin:8px 0;"><span class="npp-text-muted npp-text-sm">Đang tạo QR…</span></div>
+                <div class="npp-text-sm npp-text-muted">Nhân viên dùng <strong>camera điện thoại</strong> quét → mở trình duyệt → tự đăng nhập (không cần mở link trong Zalo).</div>
+            </div>
             <p class="npp-text-sm npp-text-muted npp-mt-2">⚠️ Lưu lại & gửi cho nhân viên. Mật khẩu chỉ hiển thị 1 lần ở đây.</p>
-            <div class="npp-flex" style="gap:8px;margin-top:8px;">
-                <button id="nv-copy" type="button" class="npp-btn-primary" style="flex:2;padding:10px;">📋 Sao chép để gửi NV</button>
-                <button id="nv-done" type="button" class="npp-cn-btn" style="flex:1;padding:10px;">Xong</button>
+            <div class="npp-flex npp-flex-wrap" style="gap:8px;margin-top:8px;">
+                <button id="nv-copy" type="button" class="npp-btn-primary" style="flex:2;min-width:150px;padding:10px;">📋 Sao chép để gửi NV</button>
+                <button id="nv-qrdl" type="button" class="npp-cn-btn" style="flex:1;min-width:110px;padding:10px;">💾 Tải ảnh QR</button>
+                <button id="nv-done" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:10px;">Xong</button>
             </div>`,
     });
     document.getElementById('nv-done').addEventListener('click', closeModal);
     document.getElementById('nv-copy').addEventListener('click', () => copyText(msg, 'nv-copy'));
+    document.getElementById('nv-qrdl').addEventListener('click', () => {
+        const img = document.querySelector('#nv-qr img');
+        if (!img || !img.src) return showToast('QR chưa sẵn sàng', 'warning');
+        const a = document.createElement('a');
+        a.href = img.src;
+        a.download = 'dang-nhap-' + (uname || 'nv') + '.gif';
+        document.body.appendChild(a); a.click(); a.remove();
+    });
+    renderQR(document.getElementById('nv-qr'), qrUrl, 190);
 }
 
 async function copyText(text, btnId) {

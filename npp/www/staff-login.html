@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="robots" content="noindex">
+<title>Đăng nhập nhân viên</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; color:#0f172a;
+    background:linear-gradient(135deg,#eef2ff 0%,#f8fafc 60%,#fff0e6 100%); padding:1rem; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:20px; box-shadow:0 12px 32px rgba(15,23,42,.10);
+    padding:1.5rem; width:100%; max-width:380px; text-align:center; }
+  h1 { font-size:1.1rem; margin:.25rem 0 1rem; }
+  .spin { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:#3b82f6; border-radius:50%;
+    margin:1rem auto; animation:s .9s linear infinite; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  .kv { text-align:left; background:#f1f5f9; border-radius:12px; padding:.75rem 1rem; margin:.75rem 0; font-size:.95rem; }
+  .kv div { margin:.2rem 0; }
+  .kv b { user-select:all; }
+  .btn { display:block; width:100%; padding:.85rem; border:none; border-radius:12px; font-weight:700; font-size:1rem;
+    background:linear-gradient(135deg,#3b82f6,#2563eb); color:#fff; text-decoration:none; cursor:pointer; margin-top:.5rem; }
+  .muted { color:#64748b; font-size:.85rem; }
+  .err { color:#b91c1c; font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔐 Đăng nhập nhân viên</h1>
+    <div id="box"><div class="spin"></div><div class="muted">Đang đăng nhập…</div></div>
+  </div>
+<script>
+(function () {
+  function parseHash() {
+    var h = (location.hash || '').replace(/^#/, ''); var o = {};
+    h.split('&').forEach(function (p) { if (!p) return; var kv = p.split('=');
+      o[decodeURIComponent(kv[0])] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' ')); });
+    return o;
+  }
+  var q = parseHash();
+  var box = document.getElementById('box');
+  function esc(s){ var d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
+  function manual(msg) {
+    box.innerHTML =
+      (msg ? '<p class="err">' + esc(msg) + '</p>' : '') +
+      '<div class="kv"><div>Tên đăng nhập: <b>' + esc(q.u || '') + '</b></div>' +
+      '<div>Mật khẩu: <b>' + esc(q.p || '') + '</b></div></div>' +
+      '<a class="btn" href="/dp">Mở trang đăng nhập →</a>' +
+      '<p class="muted" style="margin-top:.75rem;">Nhập tài khoản &amp; mật khẩu ở trên rồi đăng nhập.</p>';
+  }
+  // Xoá hash khỏi thanh địa chỉ để mật khẩu không lưu lại lịch sử.
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  if (!q.u || !q.p) { manual('Thiếu thông tin đăng nhập trong mã QR.'); return; }
+  fetch('/api/method/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    credentials: 'include',
+    body: 'usr=' + encodeURIComponent(q.u) + '&pwd=' + encodeURIComponent(q.p)
+  }).then(function (r) {
+    if (r.ok) { location.replace('/dp'); }
+    else { manual('Sai tài khoản/mật khẩu, hoặc mật khẩu đã được đổi.'); }
+  }).catch(function () { manual('Lỗi kết nối — hãy thử mở lại bằng trình duyệt.'); });
+})();
+</script>
+</body>
+</html>
