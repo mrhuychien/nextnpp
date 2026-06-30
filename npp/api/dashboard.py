@@ -89,7 +89,37 @@ def summary(customer: str | None = None) -> dict:
 
 
 def _count_active_promotions(customer: str) -> int:
-    """Count Pricing Rules currently valid for this customer."""
+    """Số 'chương trình khuyến mại đang chạy' cho ô trang chủ.
+
+    Ưu tiên salep 'Promotion Program' (KHỚP với trang /khuyen-mai mà ô này trỏ
+    tới). Khi salep chưa cài thì quay về đếm Pricing Rule còn hiệu lực (hành vi
+    cũ). Bọc try/except để KHÔNG làm vỡ cả dashboard nếu salep/schema khác."""
+    try:
+        if frappe.db.table_exists("Promotion Program"):
+            today = getdate()
+            n = 0
+            for p in frappe.get_all("Promotion Program", fields=["status", "start_date", "end_date"]):
+                st = (p.get("status") or "").strip()
+                if st in ("Nháp", "Kết thúc"):
+                    continue
+                if st == "Đang chạy":
+                    n += 1
+                    continue
+                # status trống/khác → suy theo khoảng ngày (đang trong kỳ chạy)
+                sd, ed = p.get("start_date"), p.get("end_date")
+                if (not sd or getdate(sd) <= today) and (not ed or getdate(ed) >= today):
+                    n += 1
+            return n
+    except Exception:
+        frappe.log_error("dashboard promo_count (salep)", frappe.get_traceback())
+    try:
+        return _count_active_pricing_rules(customer)
+    except Exception:
+        return 0
+
+
+def _count_active_pricing_rules(customer: str) -> int:
+    """Count Pricing Rules currently valid for this customer (fallback non-salep)."""
     # Customer của Pricing Rule nằm TRỰC TIẾP ở tabPricing Rule.customer
     # (applicable_for='Customer'). KHÔNG ở 'Pricing Rule Detail' — bảng đó không
     # có cột customer; join cũ gây "Unknown column 'prd.customer'" làm CHẾT cả
