@@ -823,6 +823,12 @@
 }
 @media (min-width: 768px) { .npp-map-wrap { height: 440px; } }
 .npp-map-wrap .leaflet-container { height: 100%; width: 100%; font: inherit; background: var(--npp-surface-2); }
+/* Leaflet sống trong .npp-app nên dính reset `.npp-app *` (box-sizing) và rule
+   `img{max-width:100%}` của web template ERPNext → tile bị co/khảm vỡ. Trả lại
+   mặc định Leaflet cần (tile không giới hạn max-width; control dùng content-box). */
+.npp-map-wrap .leaflet-container img { max-width: none !important; }
+.npp-map-wrap .leaflet-bar a,
+.npp-map-wrap .leaflet-control-zoom a { box-sizing: content-box; }
 .npp-map-legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; font-size: 0.78rem; color: var(--npp-text-2); margin-top: 0.5rem; }
 .npp-map-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--npp-border); vertical-align: -1px; margin-right: 4px; }
 

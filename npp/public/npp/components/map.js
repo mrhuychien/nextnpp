@@ -11,21 +11,32 @@
 
 let leafletPromise = null;
 
+// Leaflet được VENDOR trong app (same-origin) thay vì CDN: tránh bị CSP của site
+// chặn stylesheet ngoài (script CDN qua được nhưng CSS bị chặn → tile vỡ + mất nút
+// zoom vì leaflet.css không áp dụng). Phục vụ từ /assets nên không phụ thuộc mạng ngoài.
+const LEAFLET_BASE = '/assets/npp/npp/vendor/leaflet';
+
 export function loadLeaflet() {
     if (window.L) return Promise.resolve(window.L);
     if (leafletPromise) return leafletPromise;
     leafletPromise = new Promise((resolve, reject) => {
-        if (!document.getElementById('npp-leaflet-css')) {
+        // PHẢI chờ CSS áp dụng XONG rồi mới resolve: nếu render map khi chưa có
+        // leaflet.css thì pane/tile không được position:absolute → khảm rời rạc.
+        const cssReady = new Promise((res) => {
+            if (document.getElementById('npp-leaflet-css')) return res();
             const link = document.createElement('link');
             link.id = 'npp-leaflet-css';
             link.rel = 'stylesheet';
-            link.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+            link.href = `${LEAFLET_BASE}/leaflet.css`;
+            link.onload = res;
+            link.onerror = res;           // vẫn tiếp tục, đừng treo
             document.head.appendChild(link);
-        }
+            setTimeout(res, 3000);        // chốt chặn timeout
+        });
         const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
-        s.onload = () => (window.L ? resolve(window.L) : reject(new Error('Leaflet không khả dụng')));
-        s.onerror = () => { leafletPromise = null; reject(new Error('Không tải được thư viện bản đồ (Leaflet).')); };
+        s.src = `${LEAFLET_BASE}/leaflet.js`;
+        s.onload = () => cssReady.then(() => (window.L ? resolve(window.L) : reject(new Error('Leaflet không khả dụng'))));
+        s.onerror = () => { leafletPromise = null; reject(new Error('Không tải được thư viện bản đồ.')); };
         document.head.appendChild(s);
     });
     return leafletPromise;
@@ -58,7 +69,10 @@ export async function renderPointsMap(container, points, opts = {}) {
     if (container._nppMap) { try { container._nppMap.remove(); } catch {} container._nppMap = null; }
     container.innerHTML = '';
 
-    const map = L.map(container, { scrollWheelZoom: false });
+    const map = L.map(container, {
+        zoomControl: true,        // nút +/− (thu phóng) ở góc trên-trái
+        scrollWheelZoom: false,   // tránh cuộn trang vô tình zoom; dùng nút/pinch
+    });
     container._nppMap = map;
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19, attribution: '© OpenStreetMap',
@@ -90,8 +104,9 @@ export async function renderPointsMap(container, points, opts = {}) {
         else map.fitBounds(b.pad(0.2), { maxZoom: 16 });
     } catch { map.setView([16.0, 106.0], 5); }  // fallback: giữa VN
 
-    // Container có thể vừa hiện từ tab ẩn → ép tính lại kích thước.
-    setTimeout(() => { try { map.invalidateSize(); } catch {} }, 60);
+    // Container có thể vừa hiện từ tab ẩn / layout chưa ổn định → ép tính lại kích
+    // thước vài lần để tile lấp đầy đúng (nếu không sẽ thấy mảng xám/khảm rời).
+    [60, 300, 700].forEach((ms) => setTimeout(() => { try { map.invalidateSize(); } catch {} }, ms));
     return map;
 }
 
