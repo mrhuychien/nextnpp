@@ -199,8 +199,10 @@ def program_detail(program: str) -> dict:
             b["pts"].add(p["display_point"])
         o = p.get("owner") or "—"
         bs = by_staff_map.setdefault(o, {"user": o, "full_name": sn.get(o, o),
-                                         "distributor": p.get("distributor"), "total": 0, "approved": 0})
+                                         "distributor": p.get("distributor"), "total": 0, "approved": 0, "items": []})
         bs["total"] += 1
+        bs["items"].append({"name": p["name"], "point_name": pt_names.get(p["display_point"]) or p["display_point"],
+                            "workflow_state": st, "date": str(p["modified"]) if p.get("modified") else None})
         if st == APPROVED:
             b["approved"] += 1
             bs["approved"] += 1

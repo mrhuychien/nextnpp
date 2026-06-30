@@ -19,6 +19,7 @@ function nav(active) {
 
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
+let _pgStaff = [];   // by_staff của chương trình đang mở (để mở modal điểm bán theo NV)
 
 function errBox(msg) {
     const m = String(msg || '');
@@ -183,6 +184,7 @@ async function programDetail(program) {
                 + `${p.address_line ? `<br>${escapeHtml(p.address_line)}` : ''}<br>${p.approved ? '🟢 Đã duyệt' : '🟠 Chờ duyệt'}`,
         }));
         const pgWithGps = pgPts.filter((p) => p.lat && p.lng).length;
+        _pgStaff = d.by_staff || [];
         const partGroups = d.participants_by_npp || [];
         const partsHtml = partGroups.length
             ? `<h3 class="npp-font-bold npp-mt-3">Điểm bán tham gia (${formatNumber(t.participations || 0)}) — theo NPP</h3>
@@ -226,17 +228,36 @@ async function programDetail(program) {
                         <tbody>${d.by_npp.map((x) => `<tr><td data-label="NPP">${escapeHtml(x.customer_name)}</td><td data-label="Duyệt" class="npp-text-end">${formatNumber(x.approved)}/${formatNumber(x.total)}</td><td data-label="Độ phủ" class="npp-text-end">${x.approved_points}/${x.active_points} (${(x.coverage_pct || 0).toFixed(0)}%)</td></tr>`).join('')}</tbody></table></div>` : '<div class="npp-text-muted npp-mt-2">—</div>'}
                 </div>
                 <div class="npp-card"><h3 class="npp-font-bold">Tiến độ theo nhân viên</h3>
+                    <p class="npp-text-sm npp-text-muted">Bấm 1 nhân viên để xem điểm bán của họ trong chương trình.</p>
                     ${(d.by_staff || []).length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Nhân viên</th><th class="npp-text-end">Đã duyệt</th><th class="npp-text-end">Lượt</th></tr></thead>
-                        <tbody>${d.by_staff.map((x) => `<tr><td data-label="Nhân viên"><strong>${escapeHtml(x.full_name)}</strong><div class="npp-text-sm npp-text-muted">${escapeHtml(x.customer_name || '—')}</div></td><td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(x.approved)}</strong></td><td data-label="Lượt" class="npp-text-end">${formatNumber(x.total)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="npp-text-muted npp-mt-2">—</div>'}
+                        <tbody>${d.by_staff.map((x, i) => `<tr class="km-staff-row" data-i="${i}" style="cursor:pointer;"><td data-label="Nhân viên"><strong>${escapeHtml(x.full_name)}</strong><div class="npp-text-sm npp-text-muted">${escapeHtml(x.customer_name || '—')}</div></td><td data-label="Đã duyệt" class="npp-text-end"><strong style="color:var(--npp-success);">${formatNumber(x.approved)}</strong></td><td data-label="Lượt" class="npp-text-end">${formatNumber(x.total)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="npp-text-muted npp-mt-2">—</div>'}
                 </div>
             </div>`;
         document.getElementById('km-back').addEventListener('click', () => loadTab('ct'));
         bindGroupToggles();
         c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
+        c.querySelectorAll('.km-staff-row').forEach((tr) => tr.addEventListener('click', () => staffPointsModal(_pgStaff[+tr.dataset.i])));
         renderPointsMap(document.getElementById('km-pgmap'), pgPts);
     } catch (err) {
         c.innerHTML = errBox(err && err.message);
     }
+}
+
+// Danh sách điểm bán của 1 nhân viên trong chương trình đang mở.
+function staffPointsModal(s) {
+    if (!s) return;
+    const items = s.items || [];
+    showModal({
+        title: '👤 ' + escapeHtml(s.full_name || ''),
+        body: html`
+            <div class="npp-text-sm npp-text-muted">${escapeHtml(s.customer_name || '—')} · ${items.length} điểm bán · ${formatNumber(s.approved || 0)} đã duyệt</div>
+            ${items.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
+                <tbody>${items.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.date ? formatDate(x.date) : ''}</td></tr>`).join('')}</tbody></table></div>
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 điểm để xem chi tiết + ảnh chương trình.</p>`
+                : '<div class="npp-text-muted npp-mt-2">Nhân viên chưa có điểm bán trong chương trình này.</div>'}`,
+    });
+    const mount = document.getElementById('npp-modal-mount');
+    if (mount) mount.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
 }
 
 // Card NPP có thể xổ/thu — mặc định THU GỌN (chỉ thấy tên NPP + số lượng).
