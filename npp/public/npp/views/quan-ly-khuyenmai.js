@@ -4,6 +4,7 @@ import * as api from '../lib/api.js';
 import { banner } from '../components/banner.js';
 import { showModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
+import { renderPointsMap } from '../components/map.js';
 
 // Quản lý khuyến mại cấp KÊNH — duyệt tham gia, chương trình, điểm bán, nhân viên (toàn NPP).
 // Dữ liệu app salep qua npp.api.promo_admin.* (gate quản lý).
@@ -221,7 +222,21 @@ function renderPoints(d) {
         c.innerHTML = '<div class="npp-empty"><div class="npp-empty-icon">🏪</div><div class="npp-empty-title">Chưa có điểm bán</div></div>';
         return;
     }
-    c.innerHTML = `<div class="npp-text-sm npp-text-muted" style="margin-bottom:.5rem;">Tổng ${d.total} điểm bán · ${npps.length} NPP</div>` +
+    const allPts = [];
+    npps.forEach((g) => (g.points || []).forEach((p) => allPts.push({
+        lat: p.latitude, lng: p.longitude, active: !!p.is_active,
+        html: `<strong>${escapeHtml(p.point_name || '')}</strong><br><span style="color:#64748b;">${escapeHtml(g.customer_name)}</span>`
+            + `${p.address_line ? `<br>${escapeHtml(p.address_line)}` : ''}${p.phone ? `<br>📞 ${escapeHtml(p.phone)}` : ''}`
+            + `<br>${p.is_active ? '🟢 Hoạt động' : '⚪ Ngừng'}`,
+    })));
+    const withGps = allPts.filter((p) => p.lat && p.lng).length;
+    c.innerHTML = `<div class="npp-card"><div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+            <h3 class="npp-font-bold">Bản đồ điểm bán</h3>
+            <span class="npp-text-sm npp-text-muted">${withGps}/${d.total} điểm có toạ độ · ${npps.length} NPP</span></div>
+            <div id="km-map" class="npp-map-wrap"></div>
+            <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Hoạt động</span><span><i style="background:#94a3b8;"></i>Ngừng</span></div>
+        </div>
+        <div class="npp-text-sm npp-text-muted" style="margin:.75rem 0 .5rem;">Tổng ${d.total} điểm bán · ${npps.length} NPP</div>` +
         npps.map((g) => `<div class="npp-card npp-mt-2">
             <div class="npp-flex npp-justify-between npp-items-center"><h3 class="npp-font-bold">${escapeHtml(g.customer_name)}</h3><span class="npp-badge npp-badge-muted">${g.active}/${g.count} hoạt động</span></div>
             <div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th class="npp-text-center">TT</th><th></th></tr></thead>
@@ -232,6 +247,7 @@ function renderPoints(d) {
                     <td class="npp-text-center">${(p.latitude && p.longitude) ? `<a href="https://www.google.com/maps?q=${p.latitude},${p.longitude}" target="_blank" rel="noopener" class="npp-link">📍</a>` : ''}</td>
                 </tr>`).join('')}</tbody></table></div>
         </div>`).join('');
+    renderPointsMap(document.getElementById('km-map'), allPts);
 }
 
 // ─── Nhân viên theo NPP ───────────────────────────────────────────────────

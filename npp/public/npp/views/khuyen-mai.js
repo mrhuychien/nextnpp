@@ -5,6 +5,7 @@ import { banner } from '../components/banner.js';
 import { emptyState } from '../components/empty-state.js';
 import { showModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
+import { renderPointsMap, refreshMap } from '../components/map.js';
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
@@ -96,6 +97,14 @@ function renderBody(d) {
         <!-- TAB Điểm bán -->
         <div id="npp-km-db" class="npp-km-tab" hidden>
             <div class="npp-card">
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+                    <h3 class="npp-font-bold">Bản đồ điểm bán</h3>
+                    <span class="npp-text-sm npp-text-muted">${points.filter((p) => p.latitude && p.longitude).length}/${points.length} điểm có toạ độ</span>
+                </div>
+                <div id="npp-km-map" class="npp-map-wrap"></div>
+                <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Hoạt động</span><span><i style="background:#94a3b8;"></i>Ngừng</span></div>
+            </div>
+            <div class="npp-card npp-mt-2">
                 <div class="npp-flex npp-justify-between npp-items-center">
                     <h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
                     <button id="npp-km-addpoint" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm điểm bán</button>
@@ -185,6 +194,25 @@ function switchKmTab(t) {
         const el = document.getElementById('npp-km-' + k);
         if (el) el.hidden = (k !== t);
     });
+    if (t === 'db') initPointsMap();   // map phải khởi tạo/refresh khi tab đã hiện (Leaflet)
+}
+
+function initPointsMap() {
+    const el = document.getElementById('npp-km-map');
+    if (!el) return;
+    // State gắn vào CHÍNH element (không phải module) — render() tạo element mới mỗi
+    // lần vào view, nên cờ module sẽ kẹt; el mới luôn chưa có _nppMap → vẽ lại đúng.
+    if (el._nppMap) { refreshMap(el); return; }
+    if (el._nppPending) return;
+    el._nppPending = true;
+    const mapPts = (_points || []).map((p) => ({
+        lat: p.latitude, lng: p.longitude, active: !!p.is_active, _name: p.name,
+        html: `<strong>${escapeHtml(p.point_name || p.name)}</strong>`
+            + `${p.address_line ? `<br>${escapeHtml(p.address_line)}` : ''}${p.phone ? `<br>📞 ${escapeHtml(p.phone)}` : ''}`
+            + `<br>${p.is_active ? '🟢 Hoạt động' : '⚪ Ngừng'}${p.participated ? ' · ✅ Đã tham gia' : ''}`
+            + `<br><a href="javascript:void(0)" data-detail class="npp-link">Xem chi tiết →</a>`,
+    }));
+    renderPointsMap(el, mapPts, { onDetail: (p) => pointModal(p._name) }).finally(() => { el._nppPending = false; });
 }
 
 function v(id) { return (document.getElementById(id)?.value || '').trim(); }
