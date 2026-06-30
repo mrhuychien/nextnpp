@@ -175,7 +175,7 @@ def program_detail(program: str) -> dict:
     for r in frappe.get_all("Display Point", filters={"is_active": 1}, fields=["distributor"]):
         npp_active[r["distributor"]] = npp_active.get(r["distributor"], 0) + 1
 
-    pending, by_npp_map, by_staff_map = [], {}, {}
+    pending, by_npp_map, by_staff_map, parts_by_npp = [], {}, {}, {}
     for p in parts:
         st = p.get("workflow_state")
         if _is_pending(st):
@@ -188,6 +188,13 @@ def program_detail(program: str) -> dict:
         b = by_npp_map.setdefault(d, {"customer": d, "customer_name": cn.get(d, d),
                                       "total": 0, "approved": 0, "pts": set(), "appr_pts": set()})
         b["total"] += 1
+        # Danh sách điểm bán tham gia (đầy đủ) theo NPP — cho list xổ/thu ở UI.
+        grp = parts_by_npp.setdefault(d, {"customer": d, "customer_name": cn.get(d, d), "approved": 0, "items": []})
+        grp["items"].append({"name": p["name"], "point_name": pt_names.get(p["display_point"]) or p["display_point"],
+                             "workflow_state": st, "staff": sn.get(p.get("owner")) or p.get("owner"),
+                             "date": str(p["modified"]) if p.get("modified") else None})
+        if st == APPROVED:
+            grp["approved"] += 1
         if p.get("display_point"):
             b["pts"].add(p["display_point"])
         o = p.get("owner") or "—"
@@ -248,6 +255,7 @@ def program_detail(program: str) -> dict:
         "program": {**pg, "start_date": str(pg["start_date"]) if pg.get("start_date") else None,
                     "end_date": str(pg["end_date"]) if pg.get("end_date") else None},
         "pending": pending, "by_npp": by_npp, "by_staff": by_staff, "points": points,
+        "participants_by_npp": sorted(parts_by_npp.values(), key=lambda x: len(x["items"]), reverse=True),
         "coverage": {"total_active": total_active, "participated": participated, "approved_points": approved_pts,
                      "pct": (approved_pts / total_active * 100) if total_active else 0},
         "new_points": new_points,
@@ -369,23 +377,30 @@ def point_detail(name: str) -> dict:
     p = frappe.db.get_value(
         "Display Point", name,
         ["name", "point_name", "address_line", "phone", "latitude", "longitude",
-         "is_active", "distributor", "creation"], as_dict=True)
+         "is_active", "store_photo", "distributor", "creation"], as_dict=True)
     if not p:
         frappe.throw(_("Không tìm thấy điểm bán"))
     cn = _cust_names([p.get("distributor")])
     sn = _staff_names()
     pg = _program_names()
     parts = frappe.get_all("Display Participation", filters={"display_point": name},
-                           fields=["name", "promotion_program", "workflow_state", "owner", "modified"],
+                           fields=["name", "promotion_program", "workflow_state", "owner", "display_photo", "modified"],
                            order_by="modified desc")
     activity = [{"name": x["name"], "program": pg.get(x["promotion_program"]) or x["promotion_program"],
                  "workflow_state": x.get("workflow_state"), "staff": sn.get(x.get("owner")) or x.get("owner"),
+                 "display_photo": x.get("display_photo"),
                  "date": str(x["modified"]) if x.get("modified") else None} for x in parts]
+    images = []
+    if p.get("store_photo"):
+        images.append({"label": "Ảnh điểm bán", "url": p["store_photo"]})
+    for a in activity:
+        if a.get("display_photo"):
+            images.append({"label": "Ảnh trưng bày · " + (a["program"] or ""), "url": a["display_photo"]})
     return {
         "point": {**p, "is_active": bool(p.get("is_active")),
                   "creation": str(p.get("creation")) if p.get("creation") else None,
                   "npp": cn.get(p.get("distributor")) or p.get("distributor")},
-        "activity": activity,
+        "activity": activity, "images": images,
         "stats": {"participations": len(parts),
                   "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
                   "programs": len({x["promotion_program"] for x in parts if x.get("promotion_program")})},

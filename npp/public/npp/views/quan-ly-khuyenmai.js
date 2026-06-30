@@ -183,6 +183,14 @@ async function programDetail(program) {
                 + `${p.address_line ? `<br>${escapeHtml(p.address_line)}` : ''}<br>${p.approved ? '🟢 Đã duyệt' : '🟠 Chờ duyệt'}`,
         }));
         const pgWithGps = pgPts.filter((p) => p.lat && p.lng).length;
+        const partGroups = d.participants_by_npp || [];
+        const partsHtml = partGroups.length
+            ? `<h3 class="npp-font-bold npp-mt-3">Điểm bán tham gia (${formatNumber(t.participations || 0)}) — theo NPP</h3>
+               <p class="npp-text-sm npp-text-muted">Bấm NPP để xổ danh sách; bấm 1 điểm để xem chi tiết + ảnh chương trình.</p>`
+              + partGroups.map((g, gi) => groupCard('pg' + gi, escapeHtml(g.customer_name), `${g.approved}/${g.items.length} đã duyệt`,
+                  `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
+                      <tbody>${g.items.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(x.staff || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.date ? formatDate(x.date) : ''}</td></tr>`).join('')}</tbody></table></div>`)).join('')
+            : '';
         c.innerHTML = html`
             <a href="javascript:void(0)" id="km-back" class="npp-link">← Quay lại danh sách chương trình</a>
             <div class="npp-card npp-mt-2">
@@ -211,6 +219,7 @@ async function programDetail(program) {
                     <tbody>${d.pending.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="NPP">${escapeHtml(x.npp || '—')}</td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(x.staff || '—')}</td><td data-label="Trạng thái"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.modified ? formatDate(x.modified) : ''}</td></tr>`).join('')}</tbody></table></div>`
                     : '<div class="npp-text-muted npp-mt-2">Không có lượt cần duyệt 🎉</div>'}
             </div>
+            ${partsHtml}
             <div class="npp-grid-2 npp-mt-3">
                 <div class="npp-card"><h3 class="npp-font-bold">Tiến độ theo NPP</h3>
                     ${(d.by_npp || []).length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>NPP</th><th class="npp-text-end">Duyệt/Tham gia</th><th class="npp-text-end">Độ phủ</th></tr></thead>
@@ -222,6 +231,7 @@ async function programDetail(program) {
                 </div>
             </div>`;
         document.getElementById('km-back').addEventListener('click', () => loadTab('ct'));
+        bindGroupToggles();
         c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
         renderPointsMap(document.getElementById('km-pgmap'), pgPts);
     } catch (err) {
@@ -310,7 +320,10 @@ async function pointDetailModal(name) {
     showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:220px;"></div>' });
     try {
         const d = await api.call('npp.api.promo_admin.point_detail', { name });
-        const p = d.point || {}, st = d.stats || {}, acts = d.activity || [];
+        const p = d.point || {}, st = d.stats || {}, acts = d.activity || [], imgs = d.images || [];
+        const imgGrid = imgs.length
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
+            : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
         showModal({
             title: '🏪 ' + escapeHtml(p.point_name || name),
             body: html`
@@ -326,6 +339,8 @@ async function pointDetailModal(name) {
                     <div class="npp-kpi-card"><div class="npp-kpi-label">Lượt tham gia</div><div class="npp-kpi-value">${formatNumber(st.participations || 0)}</div></div>
                     <div class="npp-kpi-card"><div class="npp-kpi-label">Đã duyệt</div><div class="npp-kpi-value">${formatNumber(st.approved || 0)}</div><div class="npp-kpi-sub">${formatNumber(st.programs || 0)} chương trình</div></div>
                 </div>
+                <h4 class="npp-font-bold npp-mt-3">Hình ảnh</h4>
+                <div class="npp-mt-2">${imgGrid}</div>
                 <h4 class="npp-font-bold npp-mt-3">Hoạt động (${acts.length})</h4>
                 ${acts.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Chương trình</th><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
                     <tbody>${acts.map((a) => `<tr><td data-label="Chương trình">${escapeHtml(a.program || '—')}</td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(a.staff || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[a.workflow_state] || 'muted'}">${escapeHtml(a.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${a.date ? formatDate(a.date) : ''}</td></tr>`).join('')}</tbody></table></div>`
