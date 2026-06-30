@@ -87,7 +87,8 @@ export async function renderPointsMap(container, points, opts = {}) {
 
     const layers = [];
     for (const p of pts) {
-        const color = p.active === false ? '#94a3b8' : '#10b981';   // ngừng = xám, hoạt động = xanh
+        // Màu marker: ưu tiên p.color (vd theo trạng thái duyệt); mặc định theo active.
+        const color = p.color || (p.active === false ? '#94a3b8' : '#10b981');
         const cm = L.circleMarker([Number(p.lat), Number(p.lng)],
             { radius: 8, color: '#fff', weight: 2, fillColor: color, fillOpacity: 0.95 });
         if (p.html) {

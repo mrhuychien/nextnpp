@@ -177,6 +177,12 @@ async function programDetail(program) {
     try {
         const d = await api.call('npp.api.promo_admin.program_detail', { program });
         const pg = d.program || {}, cov = d.coverage || {}, t = d.totals || {};
+        const pgPts = (d.points || []).map((p) => ({
+            lat: p.latitude, lng: p.longitude, color: p.approved ? '#10b981' : '#f59e0b',
+            html: `<strong>${escapeHtml(p.name || '')}</strong><br><span style="color:#64748b;">${escapeHtml(p.npp || '')}</span>`
+                + `${p.address_line ? `<br>${escapeHtml(p.address_line)}` : ''}<br>${p.approved ? '🟢 Đã duyệt' : '🟠 Chờ duyệt'}`,
+        }));
+        const pgWithGps = pgPts.filter((p) => p.lat && p.lng).length;
         c.innerHTML = html`
             <a href="javascript:void(0)" id="km-back" class="npp-link">← Quay lại danh sách chương trình</a>
             <div class="npp-card npp-mt-2">
@@ -191,6 +197,14 @@ async function programDetail(program) {
                 <div class="npp-kpi-card"><div class="npp-kpi-label">Đã duyệt</div><div class="npp-kpi-value">${formatNumber(t.approved || 0)}</div></div>
                 <div class="npp-kpi-card"><div class="npp-kpi-label">Độ phủ</div><div class="npp-kpi-value">${(cov.pct || 0).toFixed(0)}%</div><div class="npp-kpi-sub">${cov.approved_points || 0}/${cov.total_active || 0} điểm</div></div>
                 <div class="npp-kpi-card"><div class="npp-kpi-label">Độ mở (điểm mới)</div><div class="npp-kpi-value">${formatNumber(d.new_points || 0)}</div><div class="npp-kpi-sub">mở trong kỳ CT</div></div>
+            </div>
+            <div class="npp-card npp-mt-3">
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+                    <h3 class="npp-font-bold">Bản đồ điểm bán tham gia</h3>
+                    <span class="npp-text-sm npp-text-muted">${pgWithGps}/${(d.points || []).length} điểm có toạ độ</span>
+                </div>
+                <div id="km-pgmap" class="npp-map-wrap"></div>
+                <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Đã duyệt</span><span><i style="background:#f59e0b;"></i>Chờ duyệt</span></div>
             </div>
             <div class="npp-card npp-mt-3"><h3 class="npp-font-bold">Điểm bán cần duyệt (${(d.pending || []).length})</h3>
                 ${(d.pending || []).length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>NPP</th><th>Nhân viên</th><th>Trạng thái</th><th>Ngày</th></tr></thead>
@@ -209,6 +223,7 @@ async function programDetail(program) {
             </div>`;
         document.getElementById('km-back').addEventListener('click', () => loadTab('ct'));
         c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
+        renderPointsMap(document.getElementById('km-pgmap'), pgPts);
     } catch (err) {
         c.innerHTML = errBox(err && err.message);
     }

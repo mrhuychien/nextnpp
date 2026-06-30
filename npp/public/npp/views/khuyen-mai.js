@@ -195,6 +195,7 @@ function switchKmTab(t) {
         if (el) el.hidden = (k !== t);
     });
     if (t === 'db') initPointsMap();   // map phải khởi tạo/refresh khi tab đã hiện (Leaflet)
+    if (t === 'ct') refreshMap(document.getElementById('npp-km-partsmap'));  // map tham gia nạp sẵn lúc tab ẩn
 }
 
 function initPointsMap() {
@@ -480,7 +481,17 @@ async function loadParticipations(program) {
     try {
         const rows = await api.call('npp.api.promo.npp_participations', { program: program || undefined });
         if (!rows.length) { root.innerHTML = emptyState({ icon: '📭', title: 'Chưa có điểm bán tham gia' }); return; }
-        root.innerHTML = `<div style="overflow-x:auto;"><table class="npp-table">
+        const mapPts = rows.map((r) => ({
+            lat: r.latitude, lng: r.longitude,
+            color: r.workflow_state === 'Đã duyệt' ? '#10b981' : (r.workflow_state === 'Từ chối' ? '#94a3b8' : '#f59e0b'),
+            html: `<strong>${escapeHtml(r.point_name)}</strong><br><span style="color:#64748b;">${escapeHtml(r.program_name)}</span><br>${escapeHtml(r.workflow_state || '—')}`,
+        }));
+        const withGps = mapPts.filter((p) => p.lat && p.lng).length;
+        root.innerHTML = `
+            <div class="npp-text-sm npp-text-muted" style="margin-bottom:6px;">🗺️ ${withGps}/${rows.length} điểm có toạ độ</div>
+            <div id="npp-km-partsmap" class="npp-map-wrap" style="margin-top:0;"></div>
+            <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Đã duyệt</span><span><i style="background:#f59e0b;"></i>Chờ duyệt</span><span><i style="background:#94a3b8;"></i>Từ chối</span></div>
+            <div style="overflow-x:auto;" class="npp-mt-3"><table class="npp-table">
             <thead><tr><th>Điểm bán</th><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Cập nhật</th><th></th></tr></thead>
             <tbody>${rows.map((r) => `<tr>
                 <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name)}</strong></td>
@@ -490,6 +501,7 @@ async function loadParticipations(program) {
                 <td class="npp-text-center">${gpsLink(r.latitude, r.longitude)}</td>
             </tr>`).join('')}</tbody></table></div>
             <div class="npp-text-sm npp-text-muted npp-mt-2">${rows.length} lượt tham gia</div>`;
+        renderPointsMap(document.getElementById('npp-km-partsmap'), mapPts);
     } catch (err) {
         root.innerHTML = `<div class="npp-text-muted">${escapeHtml((err && err.message) || 'Lỗi')}</div>`;
     }

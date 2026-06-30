@@ -219,10 +219,32 @@ def program_detail(program: str) -> dict:
         new_points = frappe.db.count(
             "Display Point", {"creation": ["between", [str(getdate(pg["start_date"])), str(add_days(end, 1))]]})
 
+    # Điểm bán tham gia chương trình (gộp theo điểm) + toạ độ cho bản đồ.
+    # Trạng thái điểm = "đã duyệt" nếu có ÍT NHẤT 1 lượt được duyệt, ngược lại "chờ".
+    dp_ids = list({p["display_point"] for p in parts if p.get("display_point")})
+    coords = {}
+    if dp_ids:
+        coords = {r["name"]: r for r in frappe.get_all(
+            "Display Point", filters={"name": ["in", dp_ids]},
+            fields=["name", "point_name", "address_line", "latitude", "longitude", "distributor"])}
+    pmap = {}
+    for p in parts:
+        dp = p.get("display_point")
+        info = coords.get(dp)
+        if not info:
+            continue
+        e = pmap.setdefault(dp, {
+            "name": info.get("point_name") or dp, "address_line": info.get("address_line"),
+            "latitude": info.get("latitude"), "longitude": info.get("longitude"),
+            "npp": cn.get(info.get("distributor")) or info.get("distributor"), "approved": False})
+        if p.get("workflow_state") == APPROVED:
+            e["approved"] = True
+    points = list(pmap.values())
+
     return {
         "program": {**pg, "start_date": str(pg["start_date"]) if pg.get("start_date") else None,
                     "end_date": str(pg["end_date"]) if pg.get("end_date") else None},
-        "pending": pending, "by_npp": by_npp, "by_staff": by_staff,
+        "pending": pending, "by_npp": by_npp, "by_staff": by_staff, "points": points,
         "coverage": {"total_active": total_active, "participated": participated, "approved_points": approved_pts,
                      "pct": (approved_pts / total_active * 100) if total_active else 0},
         "new_points": new_points,
