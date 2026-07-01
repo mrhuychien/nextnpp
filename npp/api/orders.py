@@ -67,7 +67,8 @@ def create_order(items, note: str | None = None) -> dict:
     si.currency = CURRENCY
     si.posting_date = today()
     si.due_date = today()
-    si.set("custom_trạng_thái_vận_chuyển", "Chờ xử lý")
+    # KHÔNG set "custom_trạng_thái_vận_chuyển" ở đây — field này do hệ thống chính
+    # quản lý; giá trị khởi tạo lấy theo default của field (do vận hành cấu hình).
     if note:
         si.set("custom_ghi_chú_npp", note)
 

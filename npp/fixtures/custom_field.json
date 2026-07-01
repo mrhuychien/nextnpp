@@ -12,19 +12,6 @@
  },
  {
   "doctype": "Custom Field",
-  "name": "Sales Invoice-custom_hình_thức_vận_chuyển",
-  "dt": "Sales Invoice",
-  "fieldname": "custom_hình_thức_vận_chuyển",
-  "label": "Hình thức vận chuyển",
-  "fieldtype": "Select",
-  "options": "\nXe HG\nXe NPP\nNhà xe\nKhách tự lấy",
-  "insert_after": "custom_npp_section_break",
-  "in_list_view": 1,
-  "in_standard_filter": 1,
-  "module": "NPP Portal"
- },
- {
-  "doctype": "Custom Field",
   "name": "Sales Invoice-custom_chuyến_xe",
   "dt": "Sales Invoice",
   "fieldname": "custom_chuyến_xe",
@@ -74,20 +61,6 @@
   "fieldtype": "Data",
   "options": "Phone",
   "insert_after": "custom_tên_lái_xe",
-  "module": "NPP Portal"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Sales Invoice-custom_trạng_thái_vận_chuyển",
-  "dt": "Sales Invoice",
-  "fieldname": "custom_trạng_thái_vận_chuyển",
-  "label": "Trạng thái vận chuyển",
-  "fieldtype": "Select",
-  "options": "Chờ xử lý\nĐang giao\nĐã giao\nĐã hủy",
-  "default": "Chờ xử lý",
-  "insert_after": "custom_điện_thoại_lái_xe",
-  "in_list_view": 1,
-  "in_standard_filter": 1,
   "module": "NPP Portal"
  },
  {

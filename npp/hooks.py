@@ -55,9 +55,17 @@ role_home_page = {
 # Fixtures — Custom fields for Sales Invoice & Item
 # (Defined in npp/fixtures/custom_field.json — auto-loaded on install)
 # ─────────────────────────────────────────────────────────────────────
+# LƯU Ý: 2 field vận chuyển dưới đây do HỆ THỐNG CHÍNH/vận hành quản lý, KHÔNG để
+# npp ghi đè. Vì vậy loại chúng khỏi fixtures (không import khi migrate) VÀ khỏi
+# bộ lọc export (không bị `bench export-fixtures` gom lại dù còn module='NPP Portal').
+# npp chỉ ĐỌC 2 field này (dashboard/đơn hàng), không định nghĩa, không set giá trị.
+_EXCLUDE_FIELDS = ["custom_hình_thức_vận_chuyển", "custom_trạng_thái_vận_chuyển"]
 fixtures = [
     {
         "doctype": "Custom Field",
-        "filters": [["module", "=", "NPP Portal"]],
+        "filters": [
+            ["module", "=", "NPP Portal"],
+            ["fieldname", "not in", _EXCLUDE_FIELDS],
+        ],
     },
 ]
