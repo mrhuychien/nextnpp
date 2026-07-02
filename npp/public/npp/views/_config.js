@@ -29,6 +29,7 @@ export const ITEM_GROUPS = {
             'TC24','TCT','SVTV','TVI','BX','CĐ','T250','Mix510','Mix900','TX170','TX300','SR170',
             'SR300','TH170','TH300','TX510','SR510','TH510','TX900','SR900','TH900','TIV','TRE',
             '5S','TX5S','TH5S','SR5S',
+            'BXRM','BXSD','BXMC','BXCR','SDKD','RMKD',
             'Vỉ ăn thử trái cây','Vỉ ăn thử thượng hạng','Vỉ ăn thử trà xanh','Vỉ ăn thử sầu riêng',
         ],
     },
