@@ -25,11 +25,11 @@ export const ITEM_GROUPS = {
         icon: '🏮',
         item_group_name: 'Hàng truyền thống',
         items: [
+            'BXRM','BXSD','BXMC','BXCR','SDKD','RMKD',
             'LX','LD','LC','LS','LK','H15','HG20','H25','H24 X','H24 D','H24 C','H24 K','H24 S',
             'TC24','TCT','SVTV','TVI','BX','CĐ','T250','Mix510','Mix900','TX170','TX300','SR170',
             'SR300','TH170','TH300','TX510','SR510','TH510','TX900','SR900','TH900','TIV','TRE',
             '5S','TX5S','TH5S','SR5S',
-            'BXRM','BXSD','BXMC','BXCR','SDKD','RMKD',
             'Vỉ ăn thử trái cây','Vỉ ăn thử thượng hạng','Vỉ ăn thử trà xanh','Vỉ ăn thử sầu riêng',
         ],
     },
