@@ -2,3 +2,4 @@
 
 [post_model_sync]
 npp.patches.block_desk_for_sales_staff
+npp.patches.grant_npp_sales_staff_perms
