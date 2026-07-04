@@ -195,11 +195,27 @@ function renderBody(d) {
         r.addEventListener('click', () => pointModal(r.dataset.n)));
 }
 
-async function addSelfAsStaff() {
-    const btn = document.getElementById('npp-km-selfstaff');
+function addSelfAsStaff() {
+    showModal({
+        title: '➕ Thêm mình làm nhân viên',
+        body: html`
+            <p class="npp-text-sm npp-text-muted">Tạo hồ sơ nhân viên bán hàng cho <strong>chính tài khoản này</strong> để tự đi trưng bày.</p>
+            <div class="npp-mt-2"><label class="npp-cn-flabel">Số điện thoại của bạn *</label>
+                <input id="self-phone" class="npp-cn-input" style="width:100%;" inputmode="tel" placeholder="VD: 0901234567"></div>
+            <button id="self-save" type="button" class="npp-btn-primary" style="padding:10px;margin-top:12px;">Tạo hồ sơ nhân viên</button>`,
+    });
+    document.getElementById('self-save').addEventListener('click', doAddSelf);
+    document.getElementById('self-phone').addEventListener('keydown', (e) => { if (e.key === 'Enter') doAddSelf(); });
+    setTimeout(() => document.getElementById('self-phone')?.focus(), 50);
+}
+
+async function doAddSelf() {
+    const phone = (document.getElementById('self-phone')?.value || '').trim();
+    if (!phone) return showToast('Vui lòng nhập số điện thoại', 'warning');
+    const btn = document.getElementById('self-save');
     if (btn) { btn.disabled = true; btn.textContent = 'Đang tạo...'; }
     try {
-        const r = await api.call('npp.api.promo.add_self_as_staff');
+        await api.call('npp.api.promo.add_self_as_staff', { phone });
         showModal({
             title: '✅ Bạn đã là nhân viên bán hàng',
             body: html`
@@ -210,7 +226,7 @@ async function addSelfAsStaff() {
         refresh();
     } catch (err) {
         showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
-        if (btn) { btn.disabled = false; btn.textContent = '➕ Thêm mình làm nhân viên'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Tạo hồ sơ nhân viên'; }
     }
 }
 

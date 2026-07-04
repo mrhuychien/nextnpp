@@ -279,10 +279,11 @@ def create_staff(full_name: str, phone: str | None = None, email: str | None = N
 
 
 @frappe.whitelist()
-def add_self_as_staff(customer: str | None = None) -> dict:
+def add_self_as_staff(phone: str | None = None, customer: str | None = None) -> dict:
     """NPP TỰ thêm mình làm nhân viên bán hàng: tạo Sales Staff Profile gắn với CHÍNH
     tài khoản đang đăng nhập (KHÔNG tạo user mới, KHÔNG đổi mật khẩu) + gán role
-    Sales Staff để vào được portal nhân viên /dp mà tự đi trưng bày."""
+    Sales Staff để vào được portal nhân viên /dp mà tự đi trưng bày.
+    `phone` bắt buộc (Sales Staff Profile yêu cầu) — lấy từ tham số, else từ User/Customer."""
     customer = require_customer(customer)
     _require_salep()
     user = frappe.session.user
@@ -300,11 +301,18 @@ def add_self_as_staff(customer: str | None = None) -> dict:
     u = frappe.db.get_value("User", user, ["full_name", "first_name", "mobile_no", "phone"], as_dict=True) or {}
     full_name = ((u.get("full_name") or u.get("first_name") or "").strip()
                  or frappe.db.get_value("Customer", customer, "customer_name") or user)
+    # SĐT bắt buộc: ưu tiên tham số → User.mobile_no/phone → Customer.mobile_no.
+    phone = ((phone or "").strip()
+             or (u.get("mobile_no") or "").strip()
+             or (u.get("phone") or "").strip()
+             or (frappe.db.get_value("Customer", customer, "mobile_no") or "").strip())
+    if not phone:
+        frappe.throw(_("Vui lòng nhập số điện thoại để tạo hồ sơ nhân viên."))
 
     p = frappe.new_doc("Sales Staff Profile")
     p.user = user
     p.full_name = full_name
-    p.phone = (u.get("mobile_no") or u.get("phone") or "").strip()
+    p.phone = phone
     p.distributor = customer
     p.insert(ignore_permissions=True)
     _ensure_sales_staff_role(user)
