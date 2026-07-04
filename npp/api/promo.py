@@ -109,6 +109,8 @@ def npp_overview(customer: str | None = None) -> dict:
     approved_total = sum(1 for p in parts if p.get("workflow_state") == APPROVED)
     return {
         "customer": customer,
+        "self_is_staff": bool(frappe.db.get_value(
+            "Sales Staff Profile", {"user": frappe.session.user, "distributor": customer}, "name")),
         "totals": {"programs": len(prog_rows),
                    "running": sum(1 for x in prog_rows if x["status"] == "Đang chạy"),
                    "points": len(points), "active_points": active_points,
@@ -274,6 +276,52 @@ def create_staff(full_name: str, phone: str | None = None, email: str | None = N
     p.distributor = customer
     p.insert(ignore_permissions=True)
     return {"name": p.name, "user": email, "username": digits, "password": password}
+
+
+@frappe.whitelist()
+def add_self_as_staff(customer: str | None = None) -> dict:
+    """NPP TỰ thêm mình làm nhân viên bán hàng: tạo Sales Staff Profile gắn với CHÍNH
+    tài khoản đang đăng nhập (KHÔNG tạo user mới, KHÔNG đổi mật khẩu) + gán role
+    Sales Staff để vào được portal nhân viên /dp mà tự đi trưng bày."""
+    customer = require_customer(customer)
+    _require_salep()
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw(_("Vui lòng đăng nhập."), frappe.PermissionError)
+
+    existing = frappe.db.get_value("Sales Staff Profile", {"user": user},
+                                   ["name", "distributor"], as_dict=True)
+    if existing:
+        if existing.get("distributor") != customer:
+            frappe.throw(_("Tài khoản của bạn đã là nhân viên của NPP khác."))
+        _ensure_sales_staff_role(user)
+        return {"name": existing["name"], "already": True}
+
+    u = frappe.db.get_value("User", user, ["full_name", "first_name", "mobile_no", "phone"], as_dict=True) or {}
+    full_name = ((u.get("full_name") or u.get("first_name") or "").strip()
+                 or frappe.db.get_value("Customer", customer, "customer_name") or user)
+
+    p = frappe.new_doc("Sales Staff Profile")
+    p.user = user
+    p.full_name = full_name
+    p.phone = (u.get("mobile_no") or u.get("phone") or "").strip()
+    p.distributor = customer
+    p.insert(ignore_permissions=True)
+    _ensure_sales_staff_role(user)
+    return {"name": p.name, "already": False, "full_name": full_name}
+
+
+def _ensure_sales_staff_role(user: str) -> None:
+    """Gán role Sales Staff cho user (để vào /dp). Đảm bảo role desk_access=0 → KHÔNG
+    kéo NPP vào Desk; KHÔNG ép user_type nên loại tài khoản hiện tại của NPP giữ nguyên."""
+    if not frappe.db.exists("Role", SALES_STAFF_ROLE):
+        return
+    if frappe.db.get_value("Role", SALES_STAFF_ROLE, "desk_access"):
+        frappe.db.set_value("Role", SALES_STAFF_ROLE, "desk_access", 0)
+    doc = frappe.get_doc("User", user)
+    if SALES_STAFF_ROLE not in {r.role for r in doc.get("roles", [])}:
+        doc.flags.ignore_permissions = True
+        doc.add_roles(SALES_STAFF_ROLE)
 
 
 @frappe.whitelist()

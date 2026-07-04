@@ -54,6 +54,7 @@ function renderBody(d) {
     const programs = d.programs || [];
     const points = d.points || [];
     const staff = d.staff || [];
+    const selfStaff = !!d.self_is_staff;
     _staff = staff;
     _points = points;
 
@@ -75,6 +76,13 @@ function renderBody(d) {
                     <h3 class="npp-font-bold">Nhân viên & tiến độ</h3>
                     <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;">➕ Thêm nhân viên</button>
                 </div>
+                ${selfStaff
+                    ? html`<div class="npp-note-block npp-note-npp npp-mt-2" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span>✅ Bạn đã có hồ sơ nhân viên bán hàng — tự đi trưng bày được.</span>
+                        <a href="/dp" class="npp-link">Mở portal nhân viên /dp →</a></div>`
+                    : html`<div class="npp-note-block npp-note-internal npp-mt-2" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span>NPP cũng đi bán? Tạo hồ sơ nhân viên cho <strong>chính tài khoản này</strong> để tự trưng bày.</span>
+                        <button id="npp-km-selfstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;">➕ Thêm mình làm nhân viên</button></div>`}
                 ${staff.length ? html`<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
                     <thead><tr><th>Nhân viên</th><th class="npp-text-center">Trạng thái</th><th class="npp-text-end">Lượt</th><th class="npp-text-end">Đã duyệt</th><th style="min-width:100px;">Tỷ lệ</th></tr></thead>
                     <tbody>${staff.map((s) => {
@@ -179,11 +187,31 @@ function renderBody(d) {
         document.getElementById('npp-km-parts').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
     document.getElementById('npp-km-addstaff')?.addEventListener('click', openCreateStaff);
+    document.getElementById('npp-km-selfstaff')?.addEventListener('click', addSelfAsStaff);
     document.getElementById('npp-km-addpoint')?.addEventListener('click', () => { window.location.href = '/dp#/points/new'; });
     document.querySelectorAll('.npp-km-staffrow').forEach((r) =>
         r.addEventListener('click', () => staffModal(r.dataset.n)));
     document.querySelectorAll('.npp-km-pointrow').forEach((r) =>
         r.addEventListener('click', () => pointModal(r.dataset.n)));
+}
+
+async function addSelfAsStaff() {
+    const btn = document.getElementById('npp-km-selfstaff');
+    if (btn) { btn.disabled = true; btn.textContent = 'Đang tạo...'; }
+    try {
+        const r = await api.call('npp.api.promo.add_self_as_staff');
+        showModal({
+            title: '✅ Bạn đã là nhân viên bán hàng',
+            body: html`
+                <p>Tài khoản của bạn giờ có <strong>hồ sơ nhân viên bán hàng</strong> — vào app nhân viên để tự tạo điểm bán & trưng bày.</p>
+                <a href="/dp" class="npp-btn-primary" style="text-decoration:none;margin-top:12px;">Mở portal nhân viên /dp →</a>
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Lần đăng nhập sau có thể vào thẳng /dp; bạn vẫn mở /npp bất cứ lúc nào.</p>`,
+        });
+        refresh();
+    } catch (err) {
+        showToast('Lỗi: ' + ((err && err.message) || ''), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '➕ Thêm mình làm nhân viên'; }
+    }
 }
 
 function switchKmTab(t) {
