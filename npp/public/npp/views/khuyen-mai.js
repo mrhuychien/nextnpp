@@ -7,6 +7,7 @@ import { showModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import { renderPointsMap, refreshMap } from '../components/map.js';
 import { renderQR } from '../components/qr.js';
+import '../components/lightbox.js';   // bấm ảnh → xem to (delegated)
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
@@ -431,7 +432,7 @@ async function pointModal(name) {
     }
     const p = d.point || {}, st = d.stats || {}, acts = d.activity || [], imgs = d.images || [];
     const imgGrid = imgs.length
-        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
         : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
     showModal({
         title: '🏪 ' + escapeHtml(p.point_name || name),
@@ -599,7 +600,7 @@ async function participationDetailModal(name) {
         const d = await api.call('npp.api.promo.npp_participation_detail', { name });
         const p = d.participation || {}, pt = d.point || {}, pg = d.program || {}, imgs = d.images || [];
         const imgGrid = imgs.length
-            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
             : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
         showModal({
             title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
