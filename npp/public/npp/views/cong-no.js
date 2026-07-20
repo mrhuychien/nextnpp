@@ -82,8 +82,27 @@ export async function render({ container }) {
 // ─── Banner chính sách ────────────────────────────────────────────────────
 function renderPolicy(d) {
     const root = document.getElementById('npp-cn-policy');
-    let h = html`<div class="npp-policy-card normal"><div class="npp-policy-icon">📅</div>
-        <div><h4>Chính sách thanh toán</h4><p>Thanh toán vào ngày <strong>5</strong> và <strong>20</strong> hàng tháng cho hóa đơn đến hạn 30 ngày.</p></div></div>`;
+    const p = d.policy || {};
+    const txt = d.policy_text || {};
+    const LV = {
+        ok:       ['normal', '✅', 'Thanh toán đúng hạn'],
+        grace:    ['normal', '⏳', p.label || 'Trong ân hạn'],
+        warn:     ['tet',    '🟠', p.label || 'Trễ hạn — phạt 50% thưởng'],
+        critical: ['tet',    '🔴', p.label || 'Trễ hạn — cắt thưởng'],
+    };
+    const lv = LV[p.level] || LV.ok;
+    let rewardLine = '';
+    if (p.reward_full) {
+        rewardLine = (p.reward_factor >= 1)
+            ? `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2% tháng này: <strong style="color:var(--npp-success);">${formatCurrency(p.reward_full)}</strong> (giữ nguyên nếu thanh toán đúng hạn).</p>`
+            : `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2% tháng này: <strong>${formatCurrency(p.reward_full)}</strong> → còn <strong style="color:${p.reward_factor > 0 ? 'var(--npp-warning)' : 'var(--npp-danger)'};">${formatCurrency(p.reward_effective)}</strong> (${p.reward_factor > 0 ? 'phạt 50%' : 'bị cắt'}).</p>`;
+    }
+    let h = html`<div class="npp-policy-card ${lv[0]}"><div class="npp-policy-icon">${lv[1]}</div>
+        <div>
+            <h4>${escapeHtml(txt.title || 'Chính sách thanh toán')} · ${escapeHtml(lv[2])}</h4>
+            <p>${(txt.lines || ['Thanh toán trong cửa sổ ngày 5–10 hàng tháng cho hoá đơn đến hạn 30 ngày.']).map(escapeHtml).join(' ')}</p>
+            ${rewardLine}
+        </div></div>`;
     if (d.tet && d.tet.active) {
         h += html`<div class="npp-policy-card tet npp-mt-2"><div class="npp-policy-icon">🧧</div>
             <div><h4>Chính sách Tết ${d.tet.year}</h4><p>Đơn hàng từ <strong>01/11/${d.tet.year}</strong> được nợ tối đa <strong>50%</strong> tổng giá trị; phần vượt phải thanh toán.</p></div></div>`;

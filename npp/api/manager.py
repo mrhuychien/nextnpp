@@ -20,6 +20,7 @@ from frappe.utils import (
     getdate,
 )
 
+from . import payment_policy as pp
 from ._utils import is_manager
 from .outstanding import channel_debt, debt_breakdown, gl_balance, gl_balances
 
@@ -579,7 +580,39 @@ def receivables() -> dict:
         credit.sort(key=lambda x: x["usage_pct"], reverse=True)
     except Exception:
         credit = []
+
+    # ─── Chính sách thanh toán: cảnh báo trễ hạn + thưởng/phạt cho kế toán ───
+    month_rev = {r["customer"]: flt(r["rev"]) for r in frappe.db.sql(
+        "SELECT customer, COALESCE(SUM(grand_total),0) AS rev FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s "
+        "AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
+        (tuple(names), get_first_day(today), today), as_dict=True)}
+    alerts = []
+    warn_n = crit_n = 0
+    penalty_total = 0.0
+    for c, v in cd.items():
+        overdue_invs = [i for i in v.get("invoices", []) if (i.get("age") or 0) > 0]
+        if not overdue_invs:
+            continue
+        st = pp.status(overdue_invs, today, month_rev.get(c, 0.0))
+        if st["days_late"] <= 0:
+            continue   # còn trong hạn (chưa qua ngày 10 của kỳ)
+        if st["level"] == "warn":
+            warn_n += 1
+        elif st["level"] == "critical":
+            crit_n += 1
+        penalty_total += st["penalty"]
+        alerts.append({"customer": c,
+                       "customer_name": (info.get(c) or {}).get("customer_name") or c,
+                       "territory": _resolve_province((info.get(c) or {}).get("territory"),
+                                                      (info.get(c) or {}).get("customer_name")),
+                       "overdue": v["overdue"], "month_revenue": month_rev.get(c, 0.0), **st})
+    alerts.sort(key=lambda x: (-x["days_late"], -x["overdue"]))
+
     return {"buckets": buckets, "top": top, "credit": credit,
+            "policy": {"alerts": alerts, "warn": warn_n, "critical": crit_n,
+                       "action_needed": warn_n + crit_n, "penalty_total": penalty_total,
+                       "text": pp.POLICY_TEXT},
             "totals": {"debt": total_debt, "overdue": total_overdue,
                        "current": buckets["current"], "npp_with_debt": len(overdue_by)}}
 

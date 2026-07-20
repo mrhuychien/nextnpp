@@ -7,6 +7,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, date_diff, flt, get_first_day, getdate
 
+from . import payment_policy as pp
 from ._utils import require_customer
 
 
@@ -31,6 +32,7 @@ def debt_breakdown(balance, invoices, today=None) -> dict:
     today = today or getdate()
     balance = flt(balance)
     buckets = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
+    allocated = []   # HĐ được phân bổ (dùng cho chính sách thanh toán: hạn ngày 10)
     if balance > 0:
         remaining = balance
         for inv in sorted(invoices, key=lambda x: getdate(x["posting_date"]), reverse=True):
@@ -43,6 +45,8 @@ def debt_breakdown(balance, invoices, today=None) -> dict:
             remaining -= alloc
             due = getdate(inv["due_date"]) if inv.get("due_date") else add_days(getdate(inv["posting_date"]), 30)
             age = date_diff(today, due)
+            allocated.append({"name": inv.get("name"), "due_date": str(due),
+                              "posting_date": str(getdate(inv["posting_date"])), "amount": alloc, "age": age})
             if age <= 0:
                 buckets["current"] += alloc
             elif age <= 30:
@@ -54,7 +58,8 @@ def debt_breakdown(balance, invoices, today=None) -> dict:
             else:
                 buckets["over_90"] += alloc
     in_term = buckets["current"]
-    return {"overdue": max(0.0, balance - in_term), "in_term": in_term, "buckets": buckets}
+    return {"overdue": max(0.0, balance - in_term), "in_term": in_term, "buckets": buckets,
+            "invoices": allocated}
 
 
 def gl_balances(customers) -> dict:
@@ -87,7 +92,8 @@ def channel_debt(customers, today=None) -> dict:
     for c in customers:
         b = bal.get(c, 0.0)
         bd = debt_breakdown(b, inv_by.get(c, []), today)
-        out[c] = {"balance": b, "overdue": bd["overdue"], "in_term": bd["in_term"], "buckets": bd["buckets"]}
+        out[c] = {"balance": b, "overdue": bd["overdue"], "in_term": bd["in_term"],
+                  "buckets": bd["buckets"], "invoices": bd["invoices"]}
     return out
 
 
@@ -367,6 +373,14 @@ def ledger_detail(customer: str | None = None) -> dict:
                    "payment50": max(0.0, current_balance - half), "count": len(tet_inv),
                    "invoices": [_inv_brief(i, today) for i in tet_inv]}
 
+    # 5) Chính sách thanh toán: trạng thái trễ hạn + thưởng/phạt 2% (trên DS tháng này)
+    month_rev = flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(grand_total),0) FROM `tabSales Invoice` "
+        "WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s "
+        "AND IFNULL(is_opening,'No')!='Yes'",
+        (customer, get_first_day(today), today))[0][0] or 0)
+    policy = pp.status([{"due_date": str(_inv_due(i))} for i in need_pay], today, month_rev)
+
     return {
         "customer": customer,
         "current_balance": current_balance,
@@ -380,6 +394,9 @@ def ledger_detail(customer: str | None = None) -> dict:
         },
         "schedule": _payment_schedule(today, in_term, need_pay, need_to_pay_amount),
         "tet": tet,
+        "policy": policy,
+        "policy_text": pp.POLICY_TEXT,
+        "month_revenue": month_rev,
     }
 
 

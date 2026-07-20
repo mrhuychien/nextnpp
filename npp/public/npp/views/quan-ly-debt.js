@@ -15,6 +15,33 @@ const BUCKETS = [
     ['current', 'Trong hạn', 'success'], ['d1_30', '1–30 ngày', 'muted'],
     ['d31_60', '31–60 ngày', 'warning'], ['d61_90', '61–90 ngày', 'warning'], ['over_90', '> 90 ngày', 'danger'],
 ];
+const PLEVEL = { grace: ['npp-badge-muted', '⏳'], warn: ['npp-badge-warning', '🟠'], critical: ['npp-badge-danger', '🔴'], ok: ['npp-badge-success', '✅'] };
+
+function policySection(p) {
+    p = p || {};
+    const alerts = p.alerts || [];
+    return html`
+        <div class="npp-card npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+                <h3 class="npp-font-bold">🧾 Chính sách thanh toán — kế toán xử lý</h3>
+                <span class="npp-badge ${p.action_needed ? 'npp-badge-danger' : 'npp-badge-success'}">${p.action_needed || 0} NPP cần xử lý</span>
+            </div>
+            ${p.action_needed ? `<div class="npp-risk-bar npp-mt-2"><span>🚨 <strong>${p.warn || 0}</strong> NPP phạt 50% thưởng · <strong>${p.critical || 0}</strong> NPP cắt thưởng</span><span>Tổng phạt thưởng ~ <strong>${formatVNDShort(p.penalty_total || 0)}</strong></span></div>` : ''}
+            ${alerts.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                <thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-center">Trễ</th><th>Trạng thái</th><th class="npp-text-end">Nợ quá hạn</th><th class="npp-text-end">Thưởng 2%</th><th class="npp-text-end">Còn được</th></tr></thead>
+                <tbody>${alerts.map((r) => { const lv = PLEVEL[r.level] || PLEVEL.grace; return `<tr>
+                    <td data-label="NPP"><a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td>
+                    <td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td>
+                    <td data-label="Trễ" class="npp-text-center">${r.days_late}d</td>
+                    <td data-label="Trạng thái"><span class="npp-badge ${lv[0]}">${lv[1]} ${escapeHtml(r.label)}</span></td>
+                    <td data-label="Nợ quá hạn" class="npp-text-end"><strong style="color:var(--npp-danger);">${formatCurrency(r.overdue)}</strong></td>
+                    <td data-label="Thưởng 2%" class="npp-text-end">${formatCurrency(r.reward_full)}</td>
+                    <td data-label="Còn được" class="npp-text-end"><strong style="color:${r.reward_factor > 0 ? 'var(--npp-success)' : 'var(--npp-danger)'};">${formatCurrency(r.reward_effective)}</strong></td>
+                </tr>`; }).join('')}</tbody></table></div>
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Thưởng 2% tính trên doanh số tháng này. Trễ 6–10 ngày (từ ngày 10) phạt 50%, trễ &gt;10 ngày cắt thưởng. Số để tham khảo — kế toán tự xử lý chi thưởng.</p>`
+                : '<p class="npp-text-sm npp-text-muted npp-mt-2">✅ Không có NPP nào trễ hạn thanh toán.</p>'}
+        </div>`;
+}
 
 export async function render({ container }) {
     container.innerHTML = html`
@@ -47,6 +74,8 @@ function renderDebt(d) {
             <div class="npp-kpi-card"><div class="npp-kpi-label">Trong hạn</div>
                 <div class="npp-kpi-value">${formatVNDShort(t.current || 0)}</div></div>
         </div>
+
+        ${policySection(d.policy)}
 
         <h3 class="npp-font-bold npp-mt-3">Tuổi nợ</h3>
         <div class="npp-kpi-grid npp-mt-2" style="grid-template-columns:repeat(2,1fr);">
