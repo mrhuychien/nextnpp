@@ -247,13 +247,10 @@ def payment_due(customer: str | None = None) -> dict:
 
 
 def _next_payment_day(today):
-    """Ngày thanh toán kế tiếp (ngày 5 hoặc 20 hàng tháng)."""
-    d = today.day
-    if d < 5:
-        return today.replace(day=5)
-    if d < 20:
-        return today.replace(day=20)
-    return get_first_day(add_months(today, 1)).replace(day=5)
+    """Hạn thanh toán kế tiếp (ngày 10 hàng tháng) — chính sách chốt ngày 5 / hạn ngày 10."""
+    if today.day <= pp.DUE_DAY:
+        return today.replace(day=pp.DUE_DAY)
+    return get_first_day(add_months(today, 1)).replace(day=pp.DUE_DAY)
 
 
 # ─── Sổ công nợ chi tiết (GL ledger) — tham khảo trang "Công Nợ Chi Tiết" ──────
@@ -277,31 +274,31 @@ def _inv_brief(inv, today):
 
 
 def _payment_schedule(today, in_term, need_pay, need_to_pay_amount):
-    """Phân bổ HĐ vào kỳ thanh toán ngày 5 & 20 (HĐ đến hạn 30 ngày tại kỳ TT)."""
-    d = today.day
-    if d < 5:
-        p1, p2 = _day_of(today, 0, 5), _day_of(today, 0, 20)
-    elif d < 20:
-        p1, p2 = _day_of(today, 0, 20), _day_of(today, 1, 5)
+    """Lịch thanh toán theo chính sách mới: CHỐT ngày 5, HẠN thanh toán ngày 10.
+    Gom HĐ vào 2 kỳ (chốt ngày 5 / hạn ngày 10) sắp tới theo hạn TT của từng HĐ.
+    HĐ đã quá hạn (need_pay) dồn vào kỳ gần nhất (cần thanh toán ngay)."""
+    # 2 kỳ sắp tới, mốc theo hôm nay: nếu đã qua ngày 10 thì kỳ này là tháng sau.
+    if today.day <= pp.DUE_DAY:
+        c1c, c1d = _day_of(today, 0, pp.CHOT_DAY), _day_of(today, 0, pp.DUE_DAY)
+        c2c, c2d = _day_of(today, 1, pp.CHOT_DAY), _day_of(today, 1, pp.DUE_DAY)
     else:
-        p1, p2 = _day_of(today, 1, 5), _day_of(today, 1, 20)
+        c1c, c1d = _day_of(today, 1, pp.CHOT_DAY), _day_of(today, 1, pp.DUE_DAY)
+        c2c, c2d = _day_of(today, 2, pp.CHOT_DAY), _day_of(today, 2, pp.DUE_DAY)
 
-    inv1, inv2 = list(need_pay), []
+    inv1, inv2 = list(need_pay), []          # need_pay = quá hạn → kỳ gần nhất
     total1, total2 = need_to_pay_amount, 0.0
     for inv in in_term:
-        posting = getdate(inv["posting_date"])
+        dl = pp.settlement_deadline(_inv_due(inv))   # hạn TT (ngày 10) của HĐ này
         out = flt(inv["outstanding_amount"])
-        if date_diff(p1, posting) >= 30:
+        if dl <= c1d:
             inv1.append(inv); total1 += out
-        elif date_diff(p2, posting) >= 30:
+        elif dl <= c2d:
             inv2.append(inv); total2 += out
-
-    first_is_5 = p1.day == 5
-    d5 = {"date": p1, "total": total1, "invoices": inv1} if first_is_5 else {"date": p2, "total": total2, "invoices": inv2}
-    d20 = {"date": p2, "total": total2, "invoices": inv2} if first_is_5 else {"date": p1, "total": total1, "invoices": inv1}
     return {
-        "day5": {"date": str(d5["date"]), "total": d5["total"], "invoices": [_inv_brief(i, today) for i in d5["invoices"]]},
-        "day20": {"date": str(d20["date"]), "total": d20["total"], "invoices": [_inv_brief(i, today) for i in d20["invoices"]]},
+        "this_cycle": {"chot_date": str(c1c), "due_date": str(c1d), "total": total1,
+                       "invoices": [_inv_brief(i, today) for i in inv1]},
+        "next_cycle": {"chot_date": str(c2c), "due_date": str(c2d), "total": total2,
+                       "invoices": [_inv_brief(i, today) for i in inv2]},
     }
 
 

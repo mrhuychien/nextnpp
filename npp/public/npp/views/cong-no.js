@@ -24,6 +24,7 @@ export async function render({ container }) {
         <div id="npp-cn-tet" class="npp-mt-3"></div>
         <div class="npp-card npp-mt-3">
             <h3 class="npp-font-bold">📅 Lịch thanh toán</h3>
+            <p class="npp-text-sm npp-text-muted">Chốt đơn ngày 5 · Hạn thanh toán ngày 10 hàng tháng (HĐ đến hạn 30 ngày).</p>
             <div class="npp-cn-sched npp-mt-2" id="npp-cn-sched">
                 <div class="npp-skeleton" style="height:120px;"></div><div class="npp-skeleton" style="height:120px;"></div>
             </div>
@@ -179,26 +180,24 @@ function tetModal(tet) {
 
 // ─── Lịch thanh toán ──────────────────────────────────────────────────────
 function renderSchedule(sch) {
-    const d5 = sch.day5 || { total: 0, invoices: [], date: null };
-    const d20 = sch.day20 || { total: 0, invoices: [], date: null };
+    const c1 = sch.this_cycle || { total: 0, invoices: [], chot_date: null, due_date: null };
+    const c2 = sch.next_cycle || { total: 0, invoices: [], chot_date: null, due_date: null };
+    const card = (c, id, cls, label) => `
+        <div class="npp-cn-sch-card ${cls}" id="${id}" role="button" tabindex="0">
+            <div class="npp-flex npp-items-center" style="gap:10px;"><div class="npp-cn-sch-day">10</div>
+                <div><div class="npp-cn-sch-date">Hạn TT: ${c.due_date ? formatDate(c.due_date) : '—'}</div>
+                    <div class="npp-text-sm" style="opacity:.75;">${label} · chốt ${c.chot_date ? formatDate(c.chot_date) : '—'}</div></div></div>
+            <div class="npp-cn-sch-amt npp-mt-2">${formatCurrency(c.total)}</div>
+            <div class="npp-text-sm">${(c.invoices || []).length} hóa đơn · Xem chi tiết →</div>
+        </div>`;
     document.getElementById('npp-cn-sched').innerHTML = html`
-        <div class="npp-cn-sch-card day5" id="npp-cn-sch5" role="button" tabindex="0">
-            <div class="npp-flex npp-items-center" style="gap:10px;"><div class="npp-cn-sch-day">5</div>
-                <div><div class="npp-cn-sch-date">${d5.date ? formatDate(d5.date) : '—'}</div><div class="npp-text-sm" style="opacity:.7;">Kỳ thanh toán</div></div></div>
-            <div class="npp-cn-sch-amt npp-mt-2">${formatCurrency(d5.total)}</div>
-            <div class="npp-text-sm">${(d5.invoices || []).length} hóa đơn · Xem chi tiết →</div>
-        </div>
-        <div class="npp-cn-sch-card day20" id="npp-cn-sch20" role="button" tabindex="0">
-            <div class="npp-flex npp-items-center" style="gap:10px;"><div class="npp-cn-sch-day">20</div>
-                <div><div class="npp-cn-sch-date">${d20.date ? formatDate(d20.date) : '—'}</div><div class="npp-text-sm" style="opacity:.7;">Kỳ thanh toán</div></div></div>
-            <div class="npp-cn-sch-amt npp-mt-2">${formatCurrency(d20.total)}</div>
-            <div class="npp-text-sm">${(d20.invoices || []).length} hóa đơn · Xem chi tiết →</div>
-        </div>
+        ${card(c1, 'npp-cn-sch1', 'day5', 'Kỳ này')}
+        ${card(c2, 'npp-cn-sch2', 'day20', 'Kỳ sau')}
     `;
-    document.getElementById('npp-cn-sch5').addEventListener('click', () =>
-        invoiceListModal(`📅 Thanh toán ngày 5 (${d5.date ? formatDate(d5.date) : ''})`, d5.invoices || [], d5.total, 'var(--npp-warning)'));
-    document.getElementById('npp-cn-sch20').addEventListener('click', () =>
-        invoiceListModal(`📅 Thanh toán ngày 20 (${d20.date ? formatDate(d20.date) : ''})`, d20.invoices || [], d20.total, 'var(--npp-primary, #3b82f6)'));
+    document.getElementById('npp-cn-sch1').addEventListener('click', () =>
+        invoiceListModal(`📅 Kỳ này — hạn TT ${c1.due_date ? formatDate(c1.due_date) : ''}`, c1.invoices || [], c1.total, 'var(--npp-warning)'));
+    document.getElementById('npp-cn-sch2').addEventListener('click', () =>
+        invoiceListModal(`📅 Kỳ sau — hạn TT ${c2.due_date ? formatDate(c2.due_date) : ''}`, c2.invoices || [], c2.total, 'var(--npp-primary, #3b82f6)'));
 }
 
 // ─── Modal: danh sách hóa đơn ─────────────────────────────────────────────
