@@ -1318,10 +1318,44 @@ def powder_report(months: int = 12) -> dict:
         col_amt[code] += a
 
     rows = sorted(by_cust.values(), key=lambda x: x["total_amount"], reverse=True)
+
+    # NPP CHƯA nhập bột trong kỳ — kèm doanh số kỳ để ưu tiên đẩy hàng (NPP lớn trước)
+    rev_by = {r["customer"]: flt(r["rev"]) for r in frappe.db.sql(
+        "SELECT customer, COALESCE(SUM(grand_total),0) AS rev FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s "
+        "AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
+        (names, start, end), as_dict=True)}
+    bought = set(by_cust.keys())
+    not_bought = sorted(
+        [{"customer": c, "customer_name": (info.get(c) or {}).get("customer_name") or c,
+          "territory": _resolve_province((info.get(c) or {}).get("territory"), (info.get(c) or {}).get("customer_name")),
+          "revenue": rev_by.get(c, 0.0)} for c in names if c not in bought],
+        key=lambda x: x["revenue"], reverse=True)
+
+    # Sản lượng theo THÁNG (toàn kênh) cho 6 mã bột
+    monthly: dict = {}
+    for r in frappe.db.sql(
+        """SELECT DATE_FORMAT(si.posting_date,'%%Y-%%m') AS ym, sii.item_code,
+                  COALESCE(SUM(sii.qty),0) AS qty
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND sii.item_code IN %s
+             AND si.posting_date BETWEEN %s AND %s AND IFNULL(si.is_opening,'No')!='Yes'
+           GROUP BY ym, sii.item_code""",
+        (names, tuple(POWDER_CODES), start, end), as_dict=True):
+        monthly.setdefault(r["ym"], {c: 0.0 for c in POWDER_CODES})[r["item_code"]] = flt(r["qty"])
+    mkeys = []
+    dcur, endm = getdate(start), getdate(end)
+    while dcur <= endm:
+        mkeys.append(dcur.strftime("%Y-%m"))
+        dcur = getdate(get_first_day(add_months(dcur, 1)))
+    by_month = [{"month": k, "by_code": monthly.get(k, {c: 0.0 for c in POWDER_CODES}),
+                 "total": sum(monthly.get(k, {}).values())} for k in mkeys]
+
     return {
         "months": months, "start": str(start), "end": str(end),
         "codes": POWDER_CODES, "code_names": code_names, "rows": rows,
+        "not_bought": not_bought, "by_month": by_month,
         "totals": {"by_code_qty": col_qty, "by_code_amount": col_amt,
                    "total_qty": sum(col_qty.values()), "total_amount": sum(col_amt.values()),
-                   "npp_bought": len(rows), "npp_total": len(names)},
+                   "npp_bought": len(rows), "npp_total": len(names), "npp_not_bought": len(not_bought)},
     }

@@ -54,6 +54,29 @@ function renderReport(d) {
     const t = d.totals || {};
     const cq = t.by_code_qty || {};
     const head = codes.map((c) => `<th class="npp-text-end" title="${escapeHtml(cnames[c] || c)}" style="white-space:nowrap;">${escapeHtml(c)}</th>`).join('');
+
+    // Sản lượng theo tháng (toàn kênh)
+    const bm = d.by_month || [];
+    const mfmt = (k) => { const s = String(k).split('-'); return s.length === 2 ? `${s[1]}/${s[0]}` : k; };
+    const monthlyHtml = bm.length ? `<div class="npp-card npp-mt-3"><h3 class="npp-font-bold">📅 Sản lượng theo tháng (toàn kênh)</h3>
+        <div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+            <thead><tr><th style="${STK}background:var(--npp-surface-2);z-index:2;min-width:90px;">Tháng</th>${head}<th class="npp-text-end">Tổng</th></tr></thead>
+            <tbody>${bm.map((m) => `<tr><td style="${STK}background:var(--npp-surface);"><strong>${mfmt(m.month)}</strong></td>${codes.map((c) => cellQ(m.by_code[c] || 0)).join('')}<td class="npp-text-end"><strong>${formatNumber(m.total)}</strong></td></tr>`).join('')}</tbody>
+            <tfoot><tr style="border-top:2px solid var(--npp-border);font-weight:800;"><td style="${STK}background:var(--npp-surface-2);">Tổng</td>${codes.map((c) => `<td class="npp-text-end">${formatNumber(cq[c] || 0)}</td>`).join('')}<td class="npp-text-end">${formatNumber(t.total_qty || 0)}</td></tr></tfoot>
+        </table></div></div>` : '';
+
+    // NPP chưa nhập bột
+    const nb = d.not_bought || [];
+    const nbHtml = `<div class="npp-card npp-mt-3">
+        <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+            <h3 class="npp-font-bold">🚫 NPP chưa nhập bột</h3>
+            <span class="npp-badge ${nb.length ? 'npp-badge-warning' : 'npp-badge-success'}">${formatNumber(nb.length)} NPP</span></div>
+        ${nb.length ? `<p class="npp-text-sm npp-text-muted">Sắp theo doanh số trong kỳ — NPP lớn chưa nhập bột nên ưu tiên đẩy hàng.</p>
+            <div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-end">Doanh số kỳ</th></tr></thead>
+            <tbody>${nb.map((r) => `<tr><td data-label="NPP"><a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td><td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td><td data-label="Doanh số kỳ" class="npp-text-end">${formatVNDShort(r.revenue || 0)}</td></tr>`).join('')}</tbody></table></div>`
+            : '<p class="npp-text-sm npp-text-muted npp-mt-2">✅ Tất cả NPP đều đã nhập hàng bột trong kỳ.</p>'}
+        </div>`;
+
     document.getElementById('npp-bot-body').innerHTML = html`
         <div class="npp-kpi-grid npp-mt-3">
             <div class="npp-kpi-card"><div class="npp-kpi-label">NPP đã nhập bột</div>
@@ -88,5 +111,7 @@ function renderReport(d) {
         </table></div>
         <p class="npp-text-sm npp-text-muted npp-mt-2">SL = tổng số lượng nhập (theo đơn vị bán). Doanh số = tổng tiền (đã loại HĐ đầu kỳ). Bấm tên NPP để mở chi tiết. Cột dính trái khi cuộn ngang.</p>
         </div>` : `<div class="npp-empty npp-mt-3"><div class="npp-empty-icon">📭</div><div class="npp-empty-title">Chưa NPP nào nhập hàng bột trong kỳ</div></div>`}
+        ${monthlyHtml}
+        ${nbHtml}
     `;
 }
