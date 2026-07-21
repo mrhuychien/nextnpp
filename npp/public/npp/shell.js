@@ -47,6 +47,7 @@ const VIEW_MODULES = {
     '/ql-tet'     : () => import(withV('./views/quan-ly-tet.js')),
     '/ql-ds'      : () => import(withV('./views/quan-ly-doanhso.js')),
     '/ql-km'      : () => import(withV('./views/quan-ly-khuyenmai.js')),
+    '/ql-bot'     : () => import(withV('./views/quan-ly-bot.js')),
 };
 
 async function renderRoute(routeKey, ctx) {
@@ -81,6 +82,7 @@ router.add('/ql-debt',                 ({ query }) => { highlightActiveRoute('/q
 router.add('/ql-tet',                  ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-tet',     { query }); });
 router.add('/ql-ds',                   ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-ds',      { query }); });
 router.add('/ql-km',                   ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-km',      { query }); });
+router.add('/ql-bot',                  ({ query }) => { highlightActiveRoute('/quan-ly');    return renderRoute('/ql-bot',     { query }); });
 
 // ─── 7. Header title sync ──────────────────────────────────────────────
 const TITLES = {
@@ -99,6 +101,7 @@ const TITLES = {
     '/ql-tet'     : 'Theo dõi Tết',
     '/ql-ds'      : 'Doanh số tháng',
     '/ql-km'      : 'Khuyến mại',
+    '/ql-bot'     : 'Hàng bột',
 };
 
 router.setBeforeNavigate(({ path }) => {

@@ -29,6 +29,8 @@ NPP_GROUP = "NPP"
 RANK_A = 200_000_000
 RANK_B = 100_000_000
 DORMANT_DAYS = 14
+# Hàng bột (6 mã) — báo cáo NPP đã nhập bao nhiêu
+POWDER_CODES = ["BXSD", "BXRM", "BXMC", "BXCR", "SDKD", "RMKD"]
 
 # 63 tỉnh/thành (dùng để chuẩn hoá cột Tỉnh từ territory/tên NPP) — dài hơn ưu tiên match trước.
 PROVINCES = sorted([
@@ -1267,3 +1269,59 @@ def sales_matrix() -> dict:
     rows.sort(key=lambda x: x["total"], reverse=True)
     return {"fiscal_year": fy_label, "fy_start": str(fy_start), "months": months, "rows": rows,
             "totals": {"monthly": col_totals, "grand_total": sum(col_totals.values())}}
+
+
+@frappe.whitelist()
+def powder_report(months: int = 12) -> dict:
+    """Báo cáo NPP đã nhập bao nhiêu HÀNG BỘT (6 mã: BXSD/BXRM/BXMC/BXCR/SDKD/RMKD).
+    Trả SL + doanh số theo từng NPP, chi tiết theo từng mã + tổng cột. Loại HĐ đầu kỳ."""
+    _guard()
+    months = max(1, min(int(months or 12), 36))
+    today = getdate()
+    start = get_first_day(add_months(today, -(months - 1)))
+    end = today
+    names = _npp_names()
+    empty = {"months": months, "start": str(start), "end": str(end), "codes": POWDER_CODES,
+             "code_names": {}, "rows": [], "totals": {}}
+    if not names:
+        return empty
+
+    code_names = {r["item_code"]: (r["item_name"] or r["item_code"]) for r in frappe.get_all(
+        "Item", filters={"item_code": ["in", POWDER_CODES]}, fields=["item_code", "item_name"])}
+
+    data = frappe.db.sql(
+        """SELECT si.customer, sii.item_code,
+                  COALESCE(SUM(sii.qty),0) AS qty, COALESCE(SUM(sii.amount),0) AS amount
+           FROM `tabSales Invoice Item` sii JOIN `tabSales Invoice` si ON sii.parent=si.name
+           WHERE si.docstatus=1 AND si.customer IN %s AND sii.item_code IN %s
+             AND si.posting_date BETWEEN %s AND %s AND IFNULL(si.is_opening,'No')!='Yes'
+           GROUP BY si.customer, sii.item_code""",
+        (names, tuple(POWDER_CODES), start, end), as_dict=True)
+
+    info = {c["name"]: c for c in frappe.get_all(
+        "Customer", filters={"name": ["in", list(names)]}, fields=["name", "customer_name", "territory"])}
+
+    by_cust: dict = {}
+    col_qty = {c: 0.0 for c in POWDER_CODES}
+    col_amt = {c: 0.0 for c in POWDER_CODES}
+    for r in data:
+        c, code = r["customer"], r["item_code"]
+        row = by_cust.setdefault(c, {
+            "customer": c, "customer_name": (info.get(c) or {}).get("customer_name") or c,
+            "territory": _resolve_province((info.get(c) or {}).get("territory"), (info.get(c) or {}).get("customer_name")),
+            "by_code": {x: 0.0 for x in POWDER_CODES}, "total_qty": 0.0, "total_amount": 0.0})
+        q, a = flt(r["qty"]), flt(r["amount"])
+        row["by_code"][code] = q
+        row["total_qty"] += q
+        row["total_amount"] += a
+        col_qty[code] += q
+        col_amt[code] += a
+
+    rows = sorted(by_cust.values(), key=lambda x: x["total_amount"], reverse=True)
+    return {
+        "months": months, "start": str(start), "end": str(end),
+        "codes": POWDER_CODES, "code_names": code_names, "rows": rows,
+        "totals": {"by_code_qty": col_qty, "by_code_amount": col_amt,
+                   "total_qty": sum(col_qty.values()), "total_amount": sum(col_amt.values()),
+                   "npp_bought": len(rows), "npp_total": len(names)},
+    }
