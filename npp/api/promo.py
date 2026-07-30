@@ -17,7 +17,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
-from ._utils import require_customer
+from ._utils import require_customer, salep_photos, salep_photos_map
 
 APPROVED = "Đã duyệt"
 SALES_STAFF_ROLE = "Sales Staff"
@@ -170,16 +170,22 @@ def npp_point_detail(point: str, customer: str | None = None) -> dict:
     activity = [{"name": x["name"], "program": pg.get(x["promotion_program"]) or x["promotion_program"],
                  "workflow_state": x.get("workflow_state"), "display_photo": x.get("display_photo"),
                  "date": str(x["modified"]) if x.get("modified") else None} for x in parts]
-    images = []
-    if p.get("store_photo"):
-        images.append({"label": "Ảnh điểm bán", "url": p["store_photo"]})
+    # NHIỀU ảnh: store_photos của điểm + display_photos của từng lượt (gộp 1 truy vấn)
+    store_photos = salep_photos("Display Point", point, "store_photos")
+    if not store_photos and p.get("store_photo"):
+        store_photos = [{"url": p["store_photo"]}]
+    part_photos = salep_photos_map("Display Participation", [x["name"] for x in parts], "display_photos")
+    image_groups = [{"label": "Ảnh điểm bán", "images": store_photos}]
+    images = [{"label": "Ảnh điểm bán", "url": im["url"]} for im in store_photos]
     for a in activity:
-        if a.get("display_photo"):
-            images.append({"label": "Ảnh trưng bày · " + (a["program"] or ""), "url": a["display_photo"]})
+        ph = part_photos.get(a["name"]) or ([{"url": a["display_photo"]}] if a.get("display_photo") else [])
+        if ph:
+            image_groups.append({"label": "Ảnh trưng bày · " + (a["program"] or ""), "images": ph})
+            images += [{"label": "Ảnh trưng bày · " + (a["program"] or ""), "url": im["url"]} for im in ph]
     return {
         "point": {**p, "is_active": bool(p.get("is_active")),
                   "creation": str(p.get("creation")) if p.get("creation") else None},
-        "activity": activity, "images": images,
+        "activity": activity, "images": images, "image_groups": image_groups,
         "stats": {"participations": len(parts),
                   "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
                   "programs": len({x["promotion_program"] for x in parts if x.get("promotion_program")})},
@@ -202,14 +208,23 @@ def npp_participation_detail(name: str, customer: str | None = None) -> dict:
                              ["point_name", "address_line", "phone", "store_photo", "is_active"], as_dict=True) or {}
     pg = frappe.db.get_value("Promotion Program", p["promotion_program"],
                              ["program_name", "status", "start_date", "end_date"], as_dict=True) or {}
-    images = [{"label": "Ảnh trưng bày (chương trình)", "url": p.get("display_photo")},
-              {"label": "Ảnh điểm bán", "url": pt.get("store_photo")}]
+    prog_photos = salep_photos("Display Participation", name, "display_photos")
+    if not prog_photos and p.get("display_photo"):
+        prog_photos = [{"url": p["display_photo"]}]
+    point_photos = salep_photos("Display Point", p["display_point"], "store_photos")
+    if not point_photos and pt.get("store_photo"):
+        point_photos = [{"url": pt["store_photo"]}]
+    image_groups = [{"label": "Ảnh trưng bày (chương trình)", "images": prog_photos},
+                    {"label": "Ảnh điểm bán", "images": point_photos}]
+    flat = ([{"label": "Ảnh trưng bày (chương trình)", "url": im["url"]} for im in prog_photos]
+            + [{"label": "Ảnh điểm bán", "url": im["url"]} for im in point_photos])
     return {
         "participation": {**p, "modified": str(p["modified"]) if p.get("modified") else None},
         "point": pt,
         "program": {**pg, "start_date": str(pg.get("start_date")) if pg.get("start_date") else None,
                     "end_date": str(pg.get("end_date")) if pg.get("end_date") else None},
-        "images": [im for im in images if im["url"]],
+        "image_groups": image_groups,
+        "images": flat,
     }
 
 

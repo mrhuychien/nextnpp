@@ -39,3 +39,42 @@ def require_customer(customer: str | None = None) -> str:
             frappe.PermissionError,
         )
     return own
+
+
+def salep_photos(parenttype: str, parent: str, parentfield: str) -> list[dict]:
+    """Đọc NHIỀU ảnh (child table 'Display Photo' của salep) của 1 bản ghi.
+    Trả list {url, captured_on, latitude, longitude}. An toàn nếu chưa có doctype."""
+    if not parent:
+        return []
+    try:
+        rows = frappe.get_all(
+            "Display Photo",
+            filters={"parenttype": parenttype, "parent": parent, "parentfield": parentfield},
+            fields=["image", "captured_on", "latitude", "longitude"], order_by="idx asc")
+    except Exception:
+        return []
+    return [{"url": r["image"],
+             "captured_on": str(r["captured_on"]) if r.get("captured_on") else None,
+             "latitude": r.get("latitude"), "longitude": r.get("longitude")}
+            for r in rows if r.get("image")]
+
+
+def salep_photos_map(parenttype: str, parents, parentfield: str) -> dict:
+    """Như salep_photos nhưng cho NHIỀU parent 1 lần (gộp theo parent) — tránh N+1."""
+    parents = [p for p in (parents or []) if p]
+    if not parents:
+        return {}
+    try:
+        rows = frappe.get_all(
+            "Display Photo",
+            filters={"parenttype": parenttype, "parent": ["in", parents], "parentfield": parentfield},
+            fields=["parent", "image", "captured_on", "latitude", "longitude"], order_by="idx asc")
+    except Exception:
+        return {}
+    out: dict = {}
+    for r in rows:
+        if r.get("image"):
+            out.setdefault(r["parent"], []).append(
+                {"url": r["image"], "captured_on": str(r["captured_on"]) if r.get("captured_on") else None,
+                 "latitude": r.get("latitude"), "longitude": r.get("longitude")})
+    return out

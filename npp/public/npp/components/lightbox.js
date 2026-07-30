@@ -35,6 +35,18 @@ export function closeLightbox() {
     if (_keyHandler) { document.removeEventListener('keydown', _keyHandler); _keyHandler = null; }
 }
 
+/** HTML cho nhiều nhóm ảnh (mỗi nhóm 1 nhãn + lưới thumbnail bấm xem to).
+ *  groups: [{ label, images: [{url, ...}] }]. Ảnh gắn class npp-zoomable → lightbox. */
+export function galleryHtml(groups) {
+    const g = (groups || []).filter((x) => (x.images || []).length);
+    if (!g.length) return '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
+    return g.map((grp) => `<div class="npp-mt-2">
+        <div class="npp-text-sm npp-font-bold">${escapeHtml(grp.label)} (${grp.images.length})</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:6px;">
+            ${grp.images.map((im) => `<img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(grp.label)}" loading="lazy" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);cursor:zoom-in;">`).join('')}
+        </div></div>`).join('');
+}
+
 function install() {
     if (_installed) return;
     _installed = true;

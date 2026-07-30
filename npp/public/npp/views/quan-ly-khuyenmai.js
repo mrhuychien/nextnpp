@@ -5,7 +5,7 @@ import { banner } from '../components/banner.js';
 import { showModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import { renderPointsMap } from '../components/map.js';
-import '../components/lightbox.js';   // bấm ảnh → xem to (delegated)
+import { galleryHtml } from '../components/lightbox.js';   // bấm ảnh → xem to (delegated) + lưới nhiều ảnh
 
 // Quản lý khuyến mại cấp KÊNH — duyệt tham gia, chương trình, điểm bán, nhân viên (toàn NPP).
 // Dữ liệu app salep qua npp.api.promo_admin.* (gate quản lý).
@@ -100,11 +100,7 @@ async function participationModal(name) {
         const d = await api.call('npp.api.promo_admin.participation_detail', { name });
         const p = d.participation || {}, pt = d.point || {}, pg = d.program || {};
         const pending = !['Đã duyệt', 'Từ chối'].includes(p.workflow_state);  // chưa quyết định → cho Duyệt/Từ chối
-        const imgs = (d.images || []).map((im) =>
-            `<figure style="margin:0;"><img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy"
-                style="width:100%;height:160px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);">
-                <figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')
-            || '<div class="npp-text-muted npp-text-sm">Không có ảnh</div>';
+        const imgs = galleryHtml(d.image_groups);
         showModal({
             title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
             body: html`
@@ -119,7 +115,7 @@ async function participationModal(name) {
                     ${p.reject_reason ? `<div class="npp-mt-2 npp-text-sm" style="color:var(--npp-danger);">Lý do từ chối: ${escapeHtml(p.reject_reason)}</div>` : ''}
                 </div>
                 <h4 class="npp-font-bold npp-mt-3">Hình ảnh</h4>
-                <div class="npp-mt-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs}</div>
+                <div class="npp-mt-2">${imgs}</div>
                 ${pending ? html`<div class="npp-flex" style="gap:8px;margin-top:12px;">
                     <button id="pa-approve" type="button" class="npp-btn-primary" style="flex:1;padding:10px;">✓ Duyệt</button>
                     <button id="pa-reject" type="button" class="npp-cn-btn" style="flex:1;padding:10px;color:var(--npp-danger);">✕ Từ chối</button>
@@ -342,10 +338,8 @@ async function pointDetailModal(name) {
     showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:220px;"></div>' });
     try {
         const d = await api.call('npp.api.promo_admin.point_detail', { name });
-        const p = d.point || {}, st = d.stats || {}, acts = d.activity || [], imgs = d.images || [];
-        const imgGrid = imgs.length
-            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${imgs.map((im) => `<figure style="margin:0;"><img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(im.label)}" loading="lazy" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);"><figcaption class="npp-text-sm npp-text-muted" style="margin-top:4px;">${escapeHtml(im.label)}</figcaption></figure>`).join('')}</div>`
-            : '<div class="npp-text-muted npp-text-sm">Chưa có hình ảnh</div>';
+        const p = d.point || {}, st = d.stats || {}, acts = d.activity || [];
+        const imgGrid = galleryHtml(d.image_groups);
         showModal({
             title: '🏪 ' + escapeHtml(p.point_name || name),
             body: html`
