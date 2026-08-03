@@ -14,6 +14,14 @@ function isoOffset(months) {
     return d.toISOString().split('T')[0];
 }
 
+/** Ngày ISO cách hôm nay `days` ngày (mặc định bộ lọc = 30 ngày gần nhất). */
+function isoDaysAgo(days) {
+    const d = new Date();
+    d.setDate(d.getDate() - (days || 0));
+    return d.toISOString().split('T')[0];
+}
+const DEFAULT_DAYS = 30;
+
 export async function render({ container }) {
     container.innerHTML = html`
         ${banner({ title: 'Công nợ chi tiết', subtitle: 'Sổ công nợ, lịch thanh toán & chi tiết giao dịch' })}
@@ -53,12 +61,12 @@ export async function render({ container }) {
         </div>
     `;
 
-    document.getElementById('npp-cn-from').value = isoOffset(-3);
+    document.getElementById('npp-cn-from').value = isoDaysAgo(DEFAULT_DAYS);
     document.getElementById('npp-cn-to').value = isoOffset(0);
     ['npp-cn-from', 'npp-cn-to', 'npp-cn-type'].forEach((id) =>
         document.getElementById(id).addEventListener('input', applyFilter));
     document.getElementById('npp-cn-reset').addEventListener('click', () => {
-        document.getElementById('npp-cn-from').value = isoOffset(-3);
+        document.getElementById('npp-cn-from').value = isoDaysAgo(DEFAULT_DAYS);
         document.getElementById('npp-cn-to').value = isoOffset(0);
         document.getElementById('npp-cn-type').value = '';
         applyFilter();
@@ -67,7 +75,9 @@ export async function render({ container }) {
 
     try {
         _data = await api.call('npp.api.outstanding.ledger_detail');
-        _ledger = _data.ledger || [];
+        // Backend trả ledger MỚI NHẤT TRƯỚC → đảo lại thành CŨ → MỚI (khớp thứ tự
+        // số dư luỹ kế, dễ đối chiếu sổ). Áp cho cả bảng lẫn CSV vì cùng dùng _ledger.
+        _ledger = (_data.ledger || []).slice().reverse();
         renderPolicy(_data);
         renderSummary(_data);
         renderTet(_data.tet || {});
