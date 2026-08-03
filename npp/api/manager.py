@@ -584,19 +584,29 @@ def receivables() -> dict:
         credit = []
 
     # ─── Chính sách thanh toán: cảnh báo trễ hạn + thưởng/phạt cho kế toán ───
+    # Thưởng 2% tính trên doanh số THÁNG TRƯỚC (trễ kỳ này → mất thưởng tháng trước).
+    prev_first = get_first_day(add_months(today, -1))
+    prev_last = get_last_day(prev_first)
     month_rev = {r["customer"]: flt(r["rev"]) for r in frappe.db.sql(
         "SELECT customer, COALESCE(SUM(grand_total),0) AS rev FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s "
         "AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
-        (tuple(names), get_first_day(today), today), as_dict=True)}
+        (tuple(names), prev_first, prev_last), as_dict=True)}
     alerts = []
+    completed = []
     warn_n = crit_n = 0
     penalty_total = 0.0
     for c, v in cd.items():
         overdue_invs = [i for i in v.get("invoices", []) if (i.get("age") or 0) > 0]
-        if not overdue_invs:
+        st = pp.status(overdue_invs, today, month_rev.get(c, 0.0), has_debt=v["balance"] > 0)
+        base = {"customer": c,
+                "customer_name": (info.get(c) or {}).get("customer_name") or c,
+                "territory": _resolve_province((info.get(c) or {}).get("territory"),
+                                               (info.get(c) or {}).get("customer_name")),
+                "overdue": v["overdue"], "month_revenue": month_rev.get(c, 0.0)}
+        if st["completed"]:
+            completed.append({**base, **st})
             continue
-        st = pp.status(overdue_invs, today, month_rev.get(c, 0.0))
         if st["days_late"] <= 0:
             continue   # còn trong hạn (chưa qua ngày 10 của kỳ)
         if st["level"] == "warn":
@@ -604,17 +614,14 @@ def receivables() -> dict:
         elif st["level"] == "critical":
             crit_n += 1
         penalty_total += st["penalty"]
-        alerts.append({"customer": c,
-                       "customer_name": (info.get(c) or {}).get("customer_name") or c,
-                       "territory": _resolve_province((info.get(c) or {}).get("territory"),
-                                                      (info.get(c) or {}).get("customer_name")),
-                       "overdue": v["overdue"], "month_revenue": month_rev.get(c, 0.0), **st})
+        alerts.append({**base, **st})
     alerts.sort(key=lambda x: (-x["days_late"], -x["overdue"]))
+    completed.sort(key=lambda x: x["reward_effective"], reverse=True)
 
     return {"buckets": buckets, "top": top, "credit": credit,
-            "policy": {"alerts": alerts, "warn": warn_n, "critical": crit_n,
+            "policy": {"alerts": alerts, "completed": completed, "warn": warn_n, "critical": crit_n,
                        "action_needed": warn_n + crit_n, "penalty_total": penalty_total,
-                       "text": pp.POLICY_TEXT},
+                       "reward_month": prev_first.strftime("%m/%Y"), "text": pp.POLICY_TEXT},
             "totals": {"debt": total_debt, "overdue": total_overdue,
                        "current": buckets["current"], "npp_with_debt": len(overdue_by)}}
 

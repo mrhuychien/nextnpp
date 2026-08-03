@@ -29,8 +29,8 @@ POLICY_TEXT = {
     "lines": [
         "Đơn đến hạn 30 ngày được chốt vào ngày 5 hàng tháng.",
         "NPP thanh toán trong cửa sổ ngày 5–10 hàng tháng.",
-        "Trễ 6–10 ngày (tính từ ngày 10): phạt 50% thưởng 2% doanh số tháng đó.",
-        "Trễ trên 10 ngày: cắt toàn bộ thưởng 2% của tháng đó.",
+        "Trễ 6–10 ngày (tính từ ngày 10): phạt 50% thưởng 2% doanh số THÁNG TRƯỚC.",
+        "Trễ trên 10 ngày: cắt toàn bộ thưởng 2% doanh số tháng trước.",
     ],
 }
 
@@ -66,27 +66,36 @@ def reward_factor(days_late: int) -> float:
     return 0.0
 
 
-def status(overdue_invoices, today=None, month_revenue: float = 0.0) -> dict:
+def status(overdue_invoices, today=None, month_revenue: float = 0.0, has_debt: bool = True) -> dict:
     """Trạng thái chính sách + thưởng/phạt cho 1 NPP.
-    overdue_invoices: các HĐ ĐÃ QUÁ HẠN còn nợ (có due_date). month_revenue: doanh số
-    tháng để tính thưởng 2%."""
+
+    overdue_invoices: các HĐ ĐÃ QUÁ HẠN còn nợ (có due_date).
+    month_revenue: doanh số THÁNG TRƯỚC — cơ sở tính thưởng 2% (thưởng của tháng
+      trước bị mất/giảm nếu kỳ thanh toán này trễ hạn).
+    has_debt: NPP còn dư nợ hay không. Không nợ + không trễ → 'done' (đã hoàn thành).
+    """
     today = today or getdate()
     days_late = days_late_of(overdue_invoices, today)
     factor = reward_factor(days_late)
     if days_late <= 0:
-        level, label = "ok", "Đúng hạn"
+        if not has_debt:
+            level, label = "done", "Đã thanh toán xong — thật tuyệt vời! 🎉"
+        else:
+            level, label = "ok", "Đúng hạn"
     elif days_late <= GRACE_DAYS:
         level, label = "grace", f"Trễ {days_late} ngày (ân hạn)"
     elif days_late <= WARN_MAX_DAYS:
-        level, label = "warn", f"Trễ {days_late} ngày — phạt 50% thưởng"
+        level, label = "warn", f"Trễ {days_late} ngày — phạt 50% thưởng tháng trước"
     else:
-        level, label = "critical", f"Trễ {days_late} ngày — cắt thưởng"
+        level, label = "critical", f"Trễ {days_late} ngày — cắt thưởng tháng trước"
     full = flt(month_revenue) * REWARD_RATE
     return {
         "days_late": days_late,
         "level": level,
         "label": label,
+        "completed": level == "done",
         "reward_pct": REWARD_RATE * 100,
+        "reward_basis": "prev_month",
         "reward_full": full,
         "reward_effective": full * factor,
         "penalty": full * (1.0 - factor),

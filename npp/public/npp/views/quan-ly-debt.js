@@ -20,6 +20,21 @@ const PLEVEL = { grace: ['npp-badge-muted', '⏳'], warn: ['npp-badge-warning', 
 function policySection(p) {
     p = p || {};
     const alerts = p.alerts || [];
+    const done = p.completed || [];
+    const rm = p.reward_month ? ` tháng ${p.reward_month}` : ' tháng trước';
+    const doneHtml = done.length ? `
+        <div class="npp-mt-3">
+            <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+                <h4 class="npp-font-bold">🎉 Đã hoàn thành thanh toán — thật tuyệt vời!</h4>
+                <span class="npp-badge npp-badge-success">${done.length} NPP</span></div>
+            <div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+                <thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-end">Thưởng 2%${escapeHtml(rm)}</th></tr></thead>
+                <tbody>${done.map((r) => `<tr>
+                    <td data-label="NPP">🎉 <a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td>
+                    <td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td>
+                    <td data-label="Thưởng" class="npp-text-end"><strong style="color:var(--npp-success);">${formatCurrency(r.reward_effective)}</strong></td>
+                </tr>`).join('')}</tbody></table></div>
+        </div>` : '';
     return html`
         <div class="npp-card npp-mt-3">
             <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
@@ -28,7 +43,7 @@ function policySection(p) {
             </div>
             ${p.action_needed ? `<div class="npp-risk-bar npp-mt-2"><span>🚨 <strong>${p.warn || 0}</strong> NPP phạt 50% thưởng · <strong>${p.critical || 0}</strong> NPP cắt thưởng</span><span>Tổng phạt thưởng ~ <strong>${formatVNDShort(p.penalty_total || 0)}</strong></span></div>` : ''}
             ${alerts.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
-                <thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-center">Trễ</th><th>Trạng thái</th><th class="npp-text-end">Nợ quá hạn</th><th class="npp-text-end">Thưởng 2%</th><th class="npp-text-end">Còn được</th></tr></thead>
+                <thead><tr><th>NPP</th><th>Tỉnh</th><th class="npp-text-center">Trễ</th><th>Trạng thái</th><th class="npp-text-end">Nợ quá hạn</th><th class="npp-text-end">Thưởng 2%${escapeHtml(rm)}</th><th class="npp-text-end">Còn được</th></tr></thead>
                 <tbody>${alerts.map((r) => { const lv = PLEVEL[r.level] || PLEVEL.grace; return `<tr>
                     <td data-label="NPP"><a href="#/ql-npp?c=${encodeURIComponent(r.customer)}" class="npp-link">${escapeHtml(r.customer_name)}</a></td>
                     <td data-label="Tỉnh">${escapeHtml(r.territory || '—')}</td>
@@ -38,8 +53,9 @@ function policySection(p) {
                     <td data-label="Thưởng 2%" class="npp-text-end">${formatCurrency(r.reward_full)}</td>
                     <td data-label="Còn được" class="npp-text-end"><strong style="color:${r.reward_factor > 0 ? 'var(--npp-success)' : 'var(--npp-danger)'};">${formatCurrency(r.reward_effective)}</strong></td>
                 </tr>`; }).join('')}</tbody></table></div>
-                <p class="npp-text-sm npp-text-muted npp-mt-2">Thưởng 2% tính trên doanh số tháng này. Trễ 6–10 ngày (từ ngày 10) phạt 50%, trễ &gt;10 ngày cắt thưởng. Số để tham khảo — kế toán tự xử lý chi thưởng.</p>`
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Thưởng 2% tính trên doanh số<strong>${escapeHtml(rm)}</strong>. Trễ 6–10 ngày (từ ngày 10) phạt 50%, trễ &gt;10 ngày cắt thưởng. Số để tham khảo — kế toán tự xử lý chi thưởng.</p>`
                 : '<p class="npp-text-sm npp-text-muted npp-mt-2">✅ Không có NPP nào trễ hạn thanh toán.</p>'}
+            ${doneHtml}
         </div>`;
 }
 

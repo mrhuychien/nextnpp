@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, add_months, date_diff, flt, get_first_day, getdate
+from frappe.utils import add_days, add_months, date_diff, flt, get_first_day, get_last_day, getdate
 
 from . import payment_policy as pp
 from ._utils import require_customer
@@ -370,13 +370,18 @@ def ledger_detail(customer: str | None = None) -> dict:
                    "payment50": max(0.0, current_balance - half), "count": len(tet_inv),
                    "invoices": [_inv_brief(i, today) for i in tet_inv]}
 
-    # 5) Chính sách thanh toán: trạng thái trễ hạn + thưởng/phạt 2% (trên DS tháng này)
+    # 5) Chính sách thanh toán: trạng thái trễ hạn + thưởng/phạt 2% trên DS THÁNG TRƯỚC
+    #    (trễ kỳ thanh toán này → mất/giảm thưởng doanh số của tháng trước).
+    prev_first = get_first_day(add_months(today, -1))
+    prev_last = get_last_day(prev_first)
     month_rev = flt(frappe.db.sql(
         "SELECT COALESCE(SUM(grand_total),0) FROM `tabSales Invoice` "
         "WHERE customer=%s AND docstatus=1 AND posting_date BETWEEN %s AND %s "
         "AND IFNULL(is_opening,'No')!='Yes'",
-        (customer, get_first_day(today), today))[0][0] or 0)
-    policy = pp.status([{"due_date": str(_inv_due(i))} for i in need_pay], today, month_rev)
+        (customer, prev_first, prev_last))[0][0] or 0)
+    policy = pp.status([{"due_date": str(_inv_due(i))} for i in need_pay], today, month_rev,
+                       has_debt=current_balance > 0)
+    policy["reward_month"] = prev_first.strftime("%m/%Y")
 
     return {
         "customer": customer,

@@ -86,17 +86,21 @@ function renderPolicy(d) {
     const p = d.policy || {};
     const txt = d.policy_text || {};
     const LV = {
+        done:     ['normal', '🎉', p.label || 'Đã hoàn thành — thật tuyệt vời!'],
         ok:       ['normal', '✅', 'Thanh toán đúng hạn'],
         grace:    ['normal', '⏳', p.label || 'Trong ân hạn'],
         warn:     ['tet',    '🟠', p.label || 'Trễ hạn — phạt 50% thưởng'],
         critical: ['tet',    '🔴', p.label || 'Trễ hạn — cắt thưởng'],
     };
     const lv = LV[p.level] || LV.ok;
+    const rm = p.reward_month ? ` tháng ${p.reward_month}` : ' tháng trước';
     let rewardLine = '';
-    if (p.reward_full) {
+    if (p.completed) {
+        rewardLine = `<p class="npp-text-sm" style="margin-top:4px;">Không còn công nợ — cảm ơn bạn đã thanh toán đúng hạn!${p.reward_full ? ` Thưởng 2%${rm}: <strong style="color:var(--npp-success);">${formatCurrency(p.reward_full)}</strong> được giữ nguyên.` : ''}</p>`;
+    } else if (p.reward_full) {
         rewardLine = (p.reward_factor >= 1)
-            ? `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2% tháng này: <strong style="color:var(--npp-success);">${formatCurrency(p.reward_full)}</strong> (giữ nguyên nếu thanh toán đúng hạn).</p>`
-            : `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2% tháng này: <strong>${formatCurrency(p.reward_full)}</strong> → còn <strong style="color:${p.reward_factor > 0 ? 'var(--npp-warning)' : 'var(--npp-danger)'};">${formatCurrency(p.reward_effective)}</strong> (${p.reward_factor > 0 ? 'phạt 50%' : 'bị cắt'}).</p>`;
+            ? `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2%${rm}: <strong style="color:var(--npp-success);">${formatCurrency(p.reward_full)}</strong> (giữ nguyên nếu thanh toán đúng hạn).</p>`
+            : `<p class="npp-text-sm" style="margin-top:4px;">Thưởng 2%${rm}: <strong>${formatCurrency(p.reward_full)}</strong> → còn <strong style="color:${p.reward_factor > 0 ? 'var(--npp-warning)' : 'var(--npp-danger)'};">${formatCurrency(p.reward_effective)}</strong> (${p.reward_factor > 0 ? 'phạt 50%' : 'bị cắt'}).</p>`;
     }
     let h = html`<div class="npp-policy-card ${lv[0]}"><div class="npp-policy-icon">${lv[1]}</div>
         <div>
