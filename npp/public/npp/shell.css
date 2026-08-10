@@ -832,6 +832,24 @@
 .npp-map-legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; font-size: 0.78rem; color: var(--npp-text-2); margin-top: 0.5rem; }
 .npp-map-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--npp-border); vertical-align: -1px; margin-right: 4px; }
 
+/* ─── Segment control (tab con) — port .kt-segment của app ketoan ─── */
+.npp-seg { display: inline-flex; background: var(--npp-surface-2); border: 1px solid var(--npp-border);
+    border-radius: var(--npp-radius-md); padding: 3px; gap: 2px; flex-wrap: wrap; }
+.npp-seg button { padding: 6px 14px; font-size: .78rem; font-weight: 700; color: var(--npp-text-2);
+    background: transparent; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; }
+.npp-seg button.npp-active { background: var(--npp-season-grad); color: #fff; }
+
+/* ─── Chip "việc cần làm" trong sổ công nợ ─── */
+.npp-todo { display: inline-flex; align-items: center; gap: 4px; font-size: .68rem; font-weight: 700;
+    padding: 2px 7px; border-radius: 999px; margin: 1px 2px 1px 0; }
+.npp-todo.red { background: #fee2e2; color: #991b1b; }
+.npp-todo.yellow { background: #fef3c7; color: #92400e; }
+
+/* ─── Nút hành động nhỏ trong bảng ─── */
+.npp-icon-act { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--npp-border);
+    background: var(--npp-surface); cursor: pointer; font-size: .9rem; line-height: 1; }
+.npp-icon-act:hover { border-color: var(--npp-season-1); }
+
 /* ─── Lightbox xem ảnh to ─── */
 img.npp-zoomable { cursor: zoom-in; }
 .npp-lightbox {

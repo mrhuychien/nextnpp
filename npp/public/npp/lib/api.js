@@ -61,4 +61,40 @@ export function getItemDetails(args) {
     return call('erpnext.stock.get_item_details.get_item_details', { args });
 }
 
+/**
+ * POST tới whitelisted method và TẢI FILE trả về (frappe.call không nhận được
+ * binary download). Dùng cho biên bản đối chiếu công nợ PDF.
+ */
+export async function downloadPost(method, args = {}) {
+    const res = await fetch('/api/method/' + method, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Frappe-CSRF-Token': window.frappe?.csrf_token || window.NPP_CONTEXT?.csrfToken || '',
+        },
+        body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+        let msg = `Lỗi ${res.status}`;
+        try {
+            const j = await res.json();
+            msg = (j._server_messages && JSON.parse(j._server_messages).map((m) => {
+                try { return JSON.parse(m).message; } catch { return m; }
+            }).join('; ')) || j.exception || j.message || msg;
+        } catch { /* giữ msg mặc định */ }
+        throw new Error(String(msg).slice(0, 500));
+    }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    const filename = m ? decodeURIComponent(m[1]) : 'download.pdf';
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return filename;
+}
+
 export { call };  // escape hatch

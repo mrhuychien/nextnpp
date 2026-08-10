@@ -22,7 +22,7 @@ from frappe.utils import (
 
 from . import payment_policy as pp
 from ._utils import is_manager
-from .outstanding import channel_debt, debt_breakdown, gl_balance, gl_balances
+from .outstanding import channel_debt, debt_breakdown, gl_balance, gl_balances, voucher_aging
 
 # Cấu hình
 NPP_GROUP = "NPP"
@@ -54,6 +54,15 @@ def _guard() -> None:
         frappe.throw(_("Login required"), frappe.PermissionError)
     if not is_manager():
         frappe.throw(_("Chỉ quản lý kênh mới xem được dữ liệu này."), frappe.PermissionError)
+
+
+def _assert_npp(customer: str) -> str:
+    """Chặn IDOR: method nhận `customer` từ client CHỈ được phép thao tác trên NPP.
+    Quản lý vẫn không kéo được sổ của KH ngoài nhóm NPP (MT, lẻ, nội bộ…)."""
+    if not customer or not frappe.db.exists(
+            "Customer", {"name": customer, "customer_group": NPP_GROUP, "disabled": 0}):
+        frappe.throw(_("NPP không hợp lệ: {0}").format(customer or ""), frappe.PermissionError)
+    return customer
 
 
 def _sum_by_customer(query: str, params: tuple) -> dict:
@@ -543,7 +552,8 @@ def receivables() -> dict:
     today = getdate()
     names = _npp_names()
     if not names:
-        return {"buckets": {}, "top": [], "credit": [], "totals": {}}
+        return {"buckets": {}, "top": [], "credit": [], "totals": {}, "policy": {},
+                "rows": [], "aging_gl": voucher_aging(()), "schedule": pp.collection_window(today)}
 
     # Công nợ GL + tuổi nợ theo từng NPP (nhóm customer_group='NPP') — chuẩn duy nhất.
     cd = channel_debt(names, today)
@@ -592,10 +602,13 @@ def receivables() -> dict:
         "WHERE docstatus=1 AND customer IN %s AND posting_date BETWEEN %s AND %s "
         "AND IFNULL(is_opening,'No')!='Yes' GROUP BY customer",
         (tuple(names), prev_first, prev_last), as_dict=True)}
+    credit_by = {x["customer"]: x for x in credit}
     alerts = []
     completed = []
+    rows = []
     warn_n = crit_n = 0
     penalty_total = 0.0
+    unbilled_total = 0.0
     for c, v in cd.items():
         overdue_invs = [i for i in v.get("invoices", []) if (i.get("age") or 0) > 0]
         st = pp.status(overdue_invs, today, month_rev.get(c, 0.0), has_debt=v["balance"] > 0)
@@ -604,6 +617,16 @@ def receivables() -> dict:
                 "territory": _resolve_province((info.get(c) or {}).get("territory"),
                                                (info.get(c) or {}).get("customer_name")),
                 "overdue": v["overdue"], "month_revenue": month_rev.get(c, 0.0)}
+        # Bảng kê từng NPP (tab "Bảng kê NPP"). unbilled = phần dư nợ KHÔNG gắn được
+        # vào hoá đơn nào (bút toán điều chỉnh, số dư đầu kỳ, thu chưa đối trừ).
+        allocated = sum(v["buckets"].values())
+        unbilled = v["balance"] - allocated
+        unbilled_total += unbilled
+        cl = credit_by.get(c) or {}
+        rows.append({**base, "debt": v["balance"], "in_term": v["in_term"], "unbilled": unbilled,
+                     "days_overdue": max([i.get("age") or 0 for i in overdue_invs] or [0]),
+                     "days_late": st["days_late"], "level": st["level"], "label": st["label"],
+                     "credit_limit": cl.get("credit_limit"), "usage_pct": cl.get("usage_pct")})
         if st["completed"]:
             completed.append({**base, **st})
             continue
@@ -617,13 +640,26 @@ def receivables() -> dict:
         alerts.append({**base, **st})
     alerts.sort(key=lambda x: (-x["days_late"], -x["overdue"]))
     completed.sort(key=lambda x: x["reward_effective"], reverse=True)
+    rows.sort(key=lambda x: (-x["overdue"], -x["debt"]))
 
-    return {"buckets": buckets, "top": top, "credit": credit,
+    # DSO ≈ nợ / doanh số 365 ngày × 365. Doanh số loại HĐ đầu kỳ, công nợ thì giữ
+    # (đúng quy ước module) → chấp nhận lệch nhẹ, đây là chỉ số xu hướng.
+    rev_365 = flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(grand_total),0) FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer IN %s AND posting_date >= %s "
+        "AND IFNULL(is_opening,'No')!='Yes'",
+        (tuple(names), add_days(today, -365)))[0][0] or 0)
+    dso = round(total_debt / rev_365 * 365, 1) if rev_365 else None
+
+    return {"buckets": buckets, "top": top, "credit": credit, "rows": rows,
+            "aging_gl": voucher_aging(names, today),
+            "schedule": pp.collection_window(today),
             "policy": {"alerts": alerts, "completed": completed, "warn": warn_n, "critical": crit_n,
                        "action_needed": warn_n + crit_n, "penalty_total": penalty_total,
                        "reward_month": prev_first.strftime("%m/%Y"), "text": pp.POLICY_TEXT},
             "totals": {"debt": total_debt, "overdue": total_overdue,
-                       "current": buckets["current"], "npp_with_debt": len(overdue_by)}}
+                       "current": buckets["current"], "npp_with_debt": len(overdue_by),
+                       "unbilled": unbilled_total, "dso": dso, "npp_count": len(names)}}
 
 
 @frappe.whitelist()
@@ -1366,3 +1402,109 @@ def powder_report(months: int = 12) -> dict:
                    "total_qty": sum(col_qty.values()), "total_amount": sum(col_amt.values()),
                    "npp_bought": len(rows), "npp_total": len(names), "npp_not_bought": len(not_bought)},
     }
+
+
+# ─── Sổ công nợ 1 NPP (port ketoan get_customer_ledger) ───────────────────────
+@frappe.whitelist()
+def debt_ledger(customer: str, from_date: str | None = None, to_date: str | None = None) -> dict:
+    """Toàn bộ giao dịch của 1 NPP trên công nợ phải thu (gộp theo chứng từ, số dư
+    luỹ kế) + việc-cần-làm gắn từng chứng từ + chứng từ NHÁP đang treo (không tính
+    vào số dư). Nguồn số dư = GL (khớp /cong-no), KHÔNG lọc company/tài khoản."""
+    _guard()
+    _assert_npp(customer)
+    to_date = getdate(to_date) if to_date else getdate()
+
+    opening = 0.0
+    if from_date:
+        from_date = getdate(from_date)
+        opening = flt(frappe.db.sql(
+            "SELECT COALESCE(SUM(debit-credit),0) FROM `tabGL Entry` "
+            "WHERE is_cancelled=0 AND party_type='Customer' AND party=%s AND posting_date < %s",
+            (customer, from_date))[0][0] or 0)
+
+    cond = "AND posting_date >= %s" if from_date else ""
+    params = [customer, to_date] + ([from_date] if from_date else [])
+    rows = frappe.db.sql(
+        f"""SELECT MIN(posting_date) AS posting_date, voucher_type, voucher_no,
+                   SUM(debit) AS debit, SUM(credit) AS credit,
+                   GROUP_CONCAT(DISTINCT `against` SEPARATOR ', ') AS against
+            FROM `tabGL Entry`
+            WHERE is_cancelled=0 AND party_type='Customer' AND party=%s
+              AND posting_date <= %s {cond}
+            GROUP BY voucher_type, voucher_no
+            ORDER BY MIN(posting_date) ASC, voucher_no ASC
+            LIMIT 1000""", tuple(params), as_dict=True)
+
+    has_einv = frappe.db.has_column("Sales Invoice", "vn_einvoice_number")
+    si_names = [r["voucher_no"] for r in rows if r["voucher_type"] == "Sales Invoice"]
+    si_info = {}
+    if si_names:
+        f = ["name", "outstanding_amount", "due_date", "posting_date", "is_return", "status"]
+        if has_einv:
+            f.append("vn_einvoice_number")
+        si_info = {x["name"]: x for x in frappe.get_all(
+            "Sales Invoice", filters={"name": ["in", si_names]}, fields=f, limit_page_length=0)}
+    pe_names = [r["voucher_no"] for r in rows if r["voucher_type"] == "Payment Entry"]
+    pe_unalloc = {x["name"]: flt(x["unallocated_amount"]) for x in frappe.get_all(
+        "Payment Entry", filters={"name": ["in", pe_names]},
+        fields=["name", "unallocated_amount"], limit_page_length=0)} if pe_names else {}
+
+    # HĐ nào CÒN NỢ thật: phân bổ số dư GL theo FIFO (npp chuẩn) — không tin
+    # outstanding_amount vì tiền về qua JE/phiếu thu chưa đối trừ không cập nhật nó.
+    open_inv = frappe.db.sql(
+        "SELECT name, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
+        "WHERE docstatus=1 AND customer=%s AND outstanding_amount>0 ORDER BY posting_date DESC",
+        (customer,), as_dict=True)
+    open_map = {i["name"]: i for i in
+                debt_breakdown(gl_balance(customer), open_inv, to_date)["invoices"]}
+
+    running, total_debit, total_credit, out = opening, 0.0, 0.0, []
+    for r in rows:
+        running += flt(r["debit"]) - flt(r["credit"])
+        total_debit += flt(r["debit"])
+        total_credit += flt(r["credit"])
+        todos = []
+        if r["voucher_type"] == "Sales Invoice":
+            si = si_info.get(r["voucher_no"]) or {}
+            if has_einv and not si.get("is_return") and not (si.get("vn_einvoice_number") or "").strip():
+                todos.append({"code": "missing_einvoice", "sev": "red"})
+            op = open_map.get(r["voucher_no"])
+            if op:
+                age = op.get("age") or 0
+                todos.append({"code": "overdue", "sev": "red", "days": age, "amount": op["amount"]}
+                             if age > 0 else
+                             {"code": "in_term", "sev": "yellow", "amount": op["amount"]})
+        elif r["voucher_type"] == "Payment Entry" and pe_unalloc.get(r["voucher_no"], 0) > 0:
+            todos.append({"code": "unmatched_payment", "sev": "yellow"})
+        out.append({"posting_date": str(r["posting_date"]), "voucher_type": r["voucher_type"],
+                    "voucher_no": r["voucher_no"], "debit": flt(r["debit"]), "credit": flt(r["credit"]),
+                    "balance": running, "docstatus": 1, "todos": todos,
+                    "against": (r.get("against") or "")[:140]})
+
+    # Chứng từ NHÁP đang treo — KHÔNG tính vào số dư (chỉ quản lý mới thấy).
+    drafts = []
+    for x in frappe.get_all("Sales Invoice",
+                            filters={"is_return": 1, "docstatus": 0, "customer": customer},
+                            fields=["name", "posting_date", "grand_total"], limit_page_length=50):
+        drafts.append({"posting_date": str(x["posting_date"]), "voucher_type": "Sales Invoice (trả hàng)",
+                       "voucher_no": x["name"], "debit": 0, "credit": abs(flt(x["grand_total"])),
+                       "balance": None, "docstatus": 0, "kind": "return", "against": "",
+                       "todos": [{"code": "draft_return", "sev": "yellow"}]})
+    try:
+        for x in frappe.db.sql(
+            """SELECT DISTINCT je.name, je.posting_date, je.total_debit
+               FROM `tabJournal Entry` je JOIN `tabJournal Entry Account` a ON a.parent=je.name
+               WHERE je.docstatus=0 AND a.party_type='Customer' AND a.party=%s LIMIT 50""",
+                (customer,), as_dict=True):
+            drafts.append({"posting_date": str(x["posting_date"]), "voucher_type": "Bút toán JE",
+                           "voucher_no": x["name"], "debit": 0, "credit": flt(x["total_debit"]),
+                           "balance": None, "docstatus": 0, "kind": "je", "against": "",
+                           "todos": [{"code": "draft_je", "sev": "yellow"}]})
+    except Exception:
+        pass
+
+    return {"customer": customer,
+            "customer_name": frappe.db.get_value("Customer", customer, "customer_name") or customer,
+            "from_date": str(from_date) if from_date else None, "to_date": str(to_date),
+            "opening": opening, "rows": out, "drafts": drafts,
+            "total_debit": total_debit, "total_credit": total_credit, "closing": running}

@@ -62,6 +62,69 @@ def debt_breakdown(balance, invoices, today=None) -> dict:
             "invoices": allocated}
 
 
+# ─── Tuổi nợ theo CHỨNG TỪ GL (port từ app ketoan) ────────────────────────────
+# Khác debt_breakdown: gộp GL theo chứng từ gốc (against_voucher) nên MỌI bút toán
+# (JE điều chỉnh, số dư đầu kỳ, khoản trả trước âm) đều vào rổ → tổng rổ LUÔN khớp
+# tổng công nợ GL. debt_breakdown chỉ phân bổ vào HĐ còn outstanding>0 (tập con).
+AGING_B1, AGING_B2, AGING_B3 = 30, 60, 90
+_AGING_EMPTY = {"current": 0.0, "d1_30": 0.0, "d31_60": 0.0, "d61_90": 0.0, "over_90": 0.0}
+
+
+def _bucketize(open_items, due_map, today=None) -> tuple:
+    """Cộng dồn số dư mở từng chứng từ vào rổ tuổi nợ.
+    open_items: [{ref, o, first_date}] từ GL; due_map: ref → hạn (Sales Invoice).
+    Không có hạn (JE, trả trước…) → tính tuổi theo ngày phát sinh đầu tiên.
+    Số âm (trả trước) trừ vào rổ tương ứng nên tổng rổ luôn khớp tổng GL."""
+    t = today or getdate()
+    sums = dict(_AGING_EMPTY)
+    total = 0.0
+    for it in open_items:
+        due = due_map.get(it.get("ref")) or it.get("first_date")
+        d = date_diff(t, getdate(due)) if due else 0
+        o = flt(it.get("o"))
+        total += o
+        if d <= 0:
+            sums["current"] += o
+        elif d <= AGING_B1:
+            sums["d1_30"] += o
+        elif d <= AGING_B2:
+            sums["d31_60"] += o
+        elif d <= AGING_B3:
+            sums["d61_90"] += o
+        else:
+            sums["over_90"] += o
+    return sums, total
+
+
+def voucher_aging(customers, today=None) -> dict:
+    """Tuổi nợ toàn nhóm KH tính TỪ GL ENTRY, gộp theo chứng từ gốc.
+    Trả {buckets, total, voucher_count, truncated}. `total` phải khớp tổng
+    gl_balances(customers) — dùng để đối chiếu trên UI."""
+    customers = tuple(customers or ())
+    if not customers:
+        return {"buckets": dict(_AGING_EMPTY), "total": 0.0, "voucher_count": 0, "truncated": False}
+    limit = 20000
+    items = frappe.db.sql(
+        """SELECT COALESCE(against_voucher, voucher_no) AS ref,
+                  SUM(debit - credit) AS o, MIN(posting_date) AS first_date
+           FROM `tabGL Entry`
+           WHERE is_cancelled=0 AND party_type='Customer' AND party IN %s
+           GROUP BY COALESCE(against_voucher, voucher_no)
+           HAVING ROUND(SUM(debit - credit), 2) <> 0
+           LIMIT %s""",
+        (customers, limit), as_dict=True)
+    # Hạn thu của chứng từ là Sales Invoice — chunk IN để không vượt max_allowed_packet.
+    refs = [it["ref"] for it in items if it.get("ref")]
+    due_map: dict = {}
+    for i in range(0, len(refs), 5000):
+        for x in frappe.get_all("Sales Invoice", filters={"name": ["in", refs[i:i + 5000]]},
+                                fields=["name", "due_date", "posting_date"], limit_page_length=0):
+            due_map[x["name"]] = x.get("due_date") or x.get("posting_date")
+    sums, total = _bucketize(items, due_map, today or getdate())
+    return {"buckets": sums, "total": flt(total), "voucher_count": len(items),
+            "truncated": len(items) >= limit}
+
+
 def gl_balances(customers) -> dict:
     """Số dư công nợ GL (debit−credit) theo TỪNG khách hàng. customers: list/tuple mã KH."""
     customers = tuple(customers)
@@ -84,7 +147,7 @@ def channel_debt(customers, today=None) -> dict:
     bal = gl_balances(customers)
     inv_by: dict = {}
     for r in frappe.db.sql(
-        "SELECT customer, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
+        "SELECT name, customer, posting_date, due_date, outstanding_amount FROM `tabSales Invoice` "
         "WHERE docstatus=1 AND customer IN %s AND outstanding_amount>0 ORDER BY posting_date DESC",
         (customers,), as_dict=True):
         inv_by.setdefault(r["customer"], []).append(r)

@@ -16,7 +16,7 @@ Quy tắc (chốt với nghiệp vụ):
 
 from __future__ import annotations
 
-from frappe.utils import add_months, date_diff, flt, get_first_day, getdate
+from frappe.utils import add_months, date_diff, flt, get_first_day, get_last_day, getdate
 
 CHOT_DAY = 5           # chốt đơn ngày 5
 DUE_DAY = 10           # hạn cuối thanh toán ngày 10
@@ -41,6 +41,27 @@ def settlement_deadline(due_date):
     due = getdate(due_date)
     base = due if due.day <= CHOT_DAY else get_first_day(add_months(due, 1))
     return getdate(base).replace(day=DUE_DAY)
+
+
+def collection_window(today=None) -> dict:
+    """Kỳ thu hiện hành: chốt ngày 5 → hạn thanh toán ngày 10 (port ketoan
+    collection_schedule, dùng hằng số của npp). Qua ngày 10 → chuyển kỳ tháng sau."""
+    def at(d, day):
+        d = getdate(d)
+        return d.replace(day=min(int(day), getdate(get_last_day(d)).day))
+
+    t = getdate(today or getdate())
+    cutoff = at(t if t.day <= DUE_DAY else getdate(add_months(t, 1)), CHOT_DAY)
+    win_end = at(cutoff, DUE_DAY)
+    return {
+        "cutoff": str(cutoff), "window_start": str(cutoff), "window_end": str(win_end),
+        "next_cutoff": str(at(getdate(add_months(cutoff, 1)), CHOT_DAY)),
+        "prev_cutoff": str(at(getdate(add_months(cutoff, -1)), CHOT_DAY)),
+        "in_window": bool(cutoff <= t <= win_end),
+        "days_to_window": max(date_diff(cutoff, t), 0),
+        "days_to_due": date_diff(win_end, t),
+        "day_start": CHOT_DAY, "day_end": DUE_DAY,
+    }
 
 
 def days_late_of(overdue_invoices, today=None) -> int:
