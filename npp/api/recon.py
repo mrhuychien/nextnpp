@@ -62,8 +62,15 @@ def _company_name() -> str:
 
 
 def _default_period(to_date: str | None):
-    to_date = to_date or str(today())
-    return str(getdate(to_date).replace(month=1, day=1)), to_date
+    """Kỳ mặc định: 01/01 năm của to_date → to_date. LUÔN trả chuỗi ISO đã chuẩn hoá
+    (ngày thô lọt vào SQL sẽ so sánh sai và âm thầm rớt dòng → biên bản sai số)."""
+    td = (getdate(to_date) if to_date else None) or getdate()
+    return str(td.replace(month=1, day=1)), str(td)
+
+
+def _norm_from(from_date: str | None, fallback: str) -> str:
+    fd = getdate(from_date) if from_date else None
+    return str(fd) if fd else fallback
 
 
 def _fragment(company_name: str, customer: str, from_date: str, to_date: str) -> str:
@@ -166,7 +173,7 @@ def export_reconciliation(customer: str, from_date: str | None = None, to_date: 
     from .manager import _assert_npp
     _assert_npp(customer)
     fd, td = _default_period(to_date)
-    from_date = from_date or fd
+    from_date = _norm_from(from_date, fd)
     _download(_document([_fragment(_company_name(), customer, from_date, td)]),
               f"DoiChieuCongNo_{_safe(customer)}_{td}.pdf")
 
@@ -186,7 +193,7 @@ def export_reconciliation_bulk(customers, from_date: str | None = None, to_date:
     for c in customers:
         _assert_npp(c)
     fd, td = _default_period(to_date)
-    from_date = from_date or fd
+    from_date = _norm_from(from_date, fd)
     name = _company_name()
     _download(_document([_fragment(name, c, from_date, td) for c in customers]),
               f"DoiChieuCongNo_{len(customers)}NPP_{td}.pdf")
@@ -198,6 +205,6 @@ def export_my_reconciliation(from_date: str | None = None, to_date: str | None =
     """NPP tự xuất biên bản đối chiếu của CHÍNH mình (scope qua require_customer)."""
     customer = require_customer(customer)
     fd, td = _default_period(to_date)
-    from_date = from_date or fd
+    from_date = _norm_from(from_date, fd)
     _download(_document([_fragment(_company_name(), customer, from_date, td)]),
               f"DoiChieuCongNo_{_safe(customer)}_{td}.pdf")

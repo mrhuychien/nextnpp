@@ -1414,16 +1414,13 @@ def debt_ledger(customer: str, from_date: str | None = None, to_date: str | None
     _assert_npp(customer)
     to_date = getdate(to_date) if to_date else getdate()
 
-    opening = 0.0
-    if from_date:
-        from_date = getdate(from_date)
-        opening = flt(frappe.db.sql(
-            "SELECT COALESCE(SUM(debit-credit),0) FROM `tabGL Entry` "
-            "WHERE is_cancelled=0 AND party_type='Customer' AND party=%s AND posting_date < %s",
-            (customer, from_date))[0][0] or 0)
+    from_date = getdate(from_date) if from_date else None
 
     cond = "AND posting_date >= %s" if from_date else ""
     params = [customer, to_date] + ([from_date] if from_date else [])
+    # Lấy MỚI NHẤT trước rồi đảo lại: nếu NPP có > LIMIT chứng từ thì phải giữ các
+    # giao dịch GẦN ĐÂY (bản ASC + LIMIT sẽ cắt mất toàn bộ phát sinh mới → số dư sai).
+    LIMIT = 1000
     rows = frappe.db.sql(
         f"""SELECT MIN(posting_date) AS posting_date, voucher_type, voucher_no,
                    SUM(debit) AS debit, SUM(credit) AS credit,
@@ -1432,8 +1429,18 @@ def debt_ledger(customer: str, from_date: str | None = None, to_date: str | None
             WHERE is_cancelled=0 AND party_type='Customer' AND party=%s
               AND posting_date <= %s {cond}
             GROUP BY voucher_type, voucher_no
-            ORDER BY MIN(posting_date) ASC, voucher_no ASC
-            LIMIT 1000""", tuple(params), as_dict=True)
+            ORDER BY MIN(posting_date) DESC, voucher_no DESC
+            LIMIT {LIMIT}""", tuple(params), as_dict=True)
+    truncated = len(rows) >= LIMIT
+    rows.reverse()   # về ASC để tính số dư luỹ kế
+
+    # Số dư đầu = số dư THẬT tại to_date trừ đi phát sinh của các dòng đang hiển thị.
+    # Nhờ vậy 'Dư cuối kỳ' LUÔN khớp gl_balance dù có bị cắt bớt dòng hay không.
+    closing_true = flt(frappe.db.sql(
+        "SELECT COALESCE(SUM(debit-credit),0) FROM `tabGL Entry` "
+        "WHERE is_cancelled=0 AND party_type='Customer' AND party=%s AND posting_date <= %s",
+        (customer, to_date))[0][0] or 0)
+    opening = closing_true - sum(flt(r["debit"]) - flt(r["credit"]) for r in rows)
 
     has_einv = frappe.db.has_column("Sales Invoice", "vn_einvoice_number")
     si_names = [r["voucher_no"] for r in rows if r["voucher_type"] == "Sales Invoice"]
@@ -1506,5 +1513,5 @@ def debt_ledger(customer: str, from_date: str | None = None, to_date: str | None
     return {"customer": customer,
             "customer_name": frappe.db.get_value("Customer", customer, "customer_name") or customer,
             "from_date": str(from_date) if from_date else None, "to_date": str(to_date),
-            "opening": opening, "rows": out, "drafts": drafts,
+            "opening": opening, "rows": out, "drafts": drafts, "truncated": truncated,
             "total_debit": total_debit, "total_credit": total_credit, "closing": running}

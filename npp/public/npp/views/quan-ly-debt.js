@@ -18,6 +18,7 @@ const BUCKETS = [
     ['d31_60', '31–60 ngày', 'warning'], ['d61_90', '61–90 ngày', 'warning'], ['over_90', '> 90 ngày', 'danger'],
 ];
 const PLEVEL = { grace: ['npp-badge-muted', '⏳'], warn: ['npp-badge-warning', '🟠'], critical: ['npp-badge-danger', '🔴'], ok: ['npp-badge-success', '✅'] };
+const BULK_MAX = 50;   // PHẢI khớp npp/api/recon.py:BULK_MAX
 
 function policySection(p) {
     p = p || {};
@@ -92,23 +93,28 @@ export async function render({ container }) {
     `;
     document.querySelectorAll('#db-tabs button').forEach((b) =>
         b.addEventListener('click', () => switchTab(b.dataset.tab)));
+    const body = document.getElementById('npp-db-body');
     try {
         _d = await api.call('npp.api.manager.receivables');
         paint();
     } catch (err) {
-        document.getElementById('npp-db-body').innerHTML =
+        // Có thể user đã chuyển view khi request còn treo → element cũ đã bị thay.
+        if (!body || !body.isConnected) return;
+        body.innerHTML =
             `<div class="npp-empty"><div class="npp-empty-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
     }
 }
 
 function switchTab(t) {
+    if (_tab === t) return;            // bấm lại tab đang mở → khỏi vẽ lại
     _tab = t;
     document.querySelectorAll('#db-tabs button').forEach((b) => b.classList.toggle('npp-active', b.dataset.tab === t));
     paint();
 }
 
 function paint() {
-    if (!_d) return;
+    // Bỏ qua nếu view đã bị thay (user điều hướng khi request còn treo).
+    if (!_d || !document.getElementById('npp-db-body')) return;
     if (_tab === 'ke') renderTable(_d); else renderOverview(_d);
 }
 
@@ -235,8 +241,10 @@ function renderTable(d) {
         document.getElementById('db-tbody').innerHTML = tbodyHtml(filtered());
     }, 200));
     document.getElementById('db-bulk-pdf').addEventListener('click', () => pdfModal(null));
+    // GÁN onclick (không addEventListener): #npp-db-body sống xuyên suốt view, chỉ
+    // đổi innerHTML — addEventListener sẽ chồng listener mỗi lần đổi tab → N lần gọi API.
     const body = document.getElementById('npp-db-body');
-    body.addEventListener('click', (e) => {
+    body.onclick = (e) => {
         const btn = e.target.closest('.db-zalo,.db-pdf,.db-ledger');
         if (btn) {
             e.stopPropagation();
@@ -247,7 +255,7 @@ function renderTable(d) {
         }
         const tr = e.target.closest('[data-customer]');
         if (tr && !e.target.closest('a')) location.hash = '#/ql-npp?c=' + encodeURIComponent(tr.dataset.customer);
-    });
+    };
 }
 
 // ─── Modal A: nhắc nợ Zalo ────────────────────────────────────────────────
@@ -292,13 +300,16 @@ function zaloModal(customer) {
 
 // ─── Modal B: biên bản đối chiếu (PDF) ────────────────────────────────────
 function pdfModal(customer) {
-    const rows = filtered();
+    const all = filtered();
     const one = customer ? (_d.rows || []).find((x) => x.customer === customer) : null;
+    if (!one && !all.length) return showToast('Không có NPP nào trong danh sách để xuất', 'warning');
+    const rows = one ? [] : all.slice(0, BULK_MAX);   // khớp cap phía server (recon.BULK_MAX)
     const y = new Date().getFullYear();
     showModal({
         title: '📄 Xuất biên bản đối chiếu công nợ',
         body: html`
-            <p>${one ? `NPP: <strong>${escapeHtml(one.customer_name)}</strong>` : `<strong>${rows.length} NPP</strong> trong danh sách hiện tại (mỗi NPP 1 trang)`}</p>
+            <p>${one ? `NPP: <strong>${escapeHtml(one.customer_name)}</strong>`
+                : `<strong>${rows.length} NPP</strong> đầu danh sách hiện tại (mỗi NPP 1 trang)${all.length > BULK_MAX ? ` — tối đa ${BULK_MAX}/lần, đang lọc ${all.length} NPP` : ''}`}</p>
             <div class="npp-grid-2 npp-mt-2">
                 <div><label class="npp-cn-flabel">Từ ngày</label><input type="date" id="db-from" class="npp-cn-input" style="width:100%;" value="${y}-01-01"></div>
                 <div><label class="npp-cn-flabel">Đến ngày</label><input type="date" id="db-to" class="npp-cn-input" style="width:100%;" value="${todayISO()}" max="${todayISO()}"></div>
@@ -343,6 +354,7 @@ async function ledgerModal(customer) {
                     <div class="npp-kpi-card"><div class="npp-kpi-label">Đã thanh toán</div><div class="npp-kpi-value" style="font-size:1.1rem;color:var(--npp-success);">${formatVNDShort(d.total_credit || 0)}</div></div>
                     <div class="npp-kpi-card"><div class="npp-kpi-label">Dư cuối kỳ</div><div class="npp-kpi-value danger" style="font-size:1.1rem;">${formatVNDShort(d.closing || 0)}</div></div>
                 </div>
+                ${d.truncated ? '<p class="npp-text-sm npp-mt-2" style="color:var(--npp-warning);">⚠ Chỉ hiện 1.000 chứng từ gần nhất. "Dư đầu kỳ" đã gộp phần cũ hơn nên "Dư cuối kỳ" vẫn khớp công nợ thực.</p>' : ''}
                 <div style="overflow-x:auto;margin-top:12px;"><table class="npp-table">
                     <thead><tr><th>Ngày</th><th>Chứng từ</th><th class="npp-text-end">Nợ</th><th class="npp-text-end">Có</th><th class="npp-text-end">Lũy kế</th><th>Việc cần làm</th></tr></thead>
                     <tbody>${rows.map((r) => `<tr>
