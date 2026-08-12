@@ -21,6 +21,12 @@ function nav(active) {
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
 let _pgStaff = [];   // by_staff của chương trình đang mở (để mở modal điểm bán theo NV)
+let _photoMonth = null;   // 'YYYY-MM' đang xem ở tab Ảnh theo tháng (null = tháng này)
+
+function ymOffset(k) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + k);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 function errBox(msg) {
     const m = String(msg || '');
@@ -36,6 +42,8 @@ export async function render({ container }) {
         <div class="npp-ql-nav" id="km-subtabs">
             <a href="javascript:void(0)" data-t="cd" class="npp-active">🔔 Cần duyệt</a>
             <a href="javascript:void(0)" data-t="ct">🎯 Chương trình</a>
+            <a href="javascript:void(0)" data-t="anh">📸 Ảnh theo tháng</a>
+            <a href="javascript:void(0)" data-t="tc">❌ Từ chối</a>
             <a href="javascript:void(0)" data-t="db">🏪 Điểm bán</a>
             <a href="javascript:void(0)" data-t="nv">👥 Nhân viên</a>
         </div>
@@ -57,6 +65,8 @@ async function loadTab(t) {
     try {
         if (t === 'cd') return renderPending(await api.call('npp.api.promo_admin.pending_participations'));
         if (t === 'ct') return renderPrograms(await api.call('npp.api.promo_admin.programs'));
+        if (t === 'anh') return renderPhoto(await api.call('npp.api.promo_admin.photo_refresh', { month: _photoMonth }));
+        if (t === 'tc') return renderRejected(await api.call('npp.api.promo_admin.rejected_participations'));
         if (t === 'db') return renderPoints(await api.call('npp.api.promo_admin.points_by_npp'));
         if (t === 'nv') return renderStaff(await api.call('npp.api.promo_admin.staff_by_npp'));
     } catch (err) {
@@ -100,6 +110,7 @@ async function participationModal(name) {
         const d = await api.call('npp.api.promo_admin.participation_detail', { name });
         const p = d.participation || {}, pt = d.point || {}, pg = d.program || {};
         const pending = !['Đã duyệt', 'Từ chối'].includes(p.workflow_state);  // chưa quyết định → cho Duyệt/Từ chối
+        const rejected = p.workflow_state === 'Từ chối';                       // đã từ chối → cho Duyệt lại
         const imgs = galleryHtml(d.image_groups);
         showModal({
             title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
@@ -119,21 +130,28 @@ async function participationModal(name) {
                 ${pending ? html`<div class="npp-flex" style="gap:8px;margin-top:12px;">
                     <button id="pa-approve" type="button" class="npp-btn-primary" style="flex:1;padding:10px;">✓ Duyệt</button>
                     <button id="pa-reject" type="button" class="npp-cn-btn" style="flex:1;padding:10px;color:var(--npp-danger);">✕ Từ chối</button>
-                </div>` : ''}`,
+                </div>` : ''}
+                ${rejected ? html`<div class="npp-flex" style="gap:8px;margin-top:12px;">
+                    <button id="pa-reapprove" type="button" class="npp-btn-primary" style="flex:1;padding:10px;">✓ Duyệt lại</button>
+                </div>` : ''}
+                ${p.display_point ? `<div class="npp-mt-2"><a href="javascript:void(0)" id="pa-point" class="npp-link">🏪 Xem chi tiết điểm bán →</a></div>` : ''}`,
         });
         if (pending) {
             document.getElementById('pa-approve').addEventListener('click', () => approveP(name));
             document.getElementById('pa-reject').addEventListener('click', () => rejectP(name));
         }
+        if (rejected) document.getElementById('pa-reapprove').addEventListener('click', () => approveP(name, 'tc'));
+        const pl = document.getElementById('pa-point');
+        if (pl) pl.addEventListener('click', () => pointDetailModal(p.display_point));
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
 }
 
-async function approveP(name) {
+async function approveP(name, backTab) {
     try {
         await api.call('npp.api.promo_admin.approve_participation', { name });
-        closeModal(); showToast('Đã duyệt', 'success'); loadTab('cd');
+        closeModal(); showToast('Đã duyệt', 'success'); loadTab(backTab || 'cd');
     } catch (err) { showToast('Lỗi: ' + ((err && err.message) || ''), 'error'); }
 }
 
@@ -248,13 +266,18 @@ function staffPointsModal(s) {
         title: '👤 ' + escapeHtml(s.full_name || ''),
         body: html`
             <div class="npp-text-sm npp-text-muted">${escapeHtml(s.customer_name || '—')} · ${items.length} điểm bán · ${formatNumber(s.approved || 0)} đã duyệt</div>
-            ${items.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
-                <tbody>${items.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.date ? formatDate(x.date) : ''}</td></tr>`).join('')}</tbody></table></div>
-                <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 điểm để xem chi tiết + ảnh chương trình.</p>`
+            ${items.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th><th></th></tr></thead>
+                <tbody>${items.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.date ? formatDate(x.date) : ''}</td>
+                    <td class="npp-text-center">${x.display_point ? `<button type="button" class="npp-icon-act km-ptbtn" data-p="${escapeHtml(x.display_point)}" title="Chi tiết điểm bán">🏪</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để xem lượt tham gia + ảnh chương trình · 🏪 xem chi tiết điểm bán.</p>`
                 : '<div class="npp-text-muted npp-mt-2">Nhân viên chưa có điểm bán trong chương trình này.</div>'}`,
     });
     const mount = document.getElementById('npp-modal-mount');
-    if (mount) mount.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
+    if (!mount) return;
+    mount.querySelectorAll('.km-ptbtn').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation(); pointDetailModal(b.dataset.p);
+    }));
+    mount.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
 }
 
 // Card NPP có thể xổ/thu — mặc định THU GỌN (chỉ thấy tên NPP + số lượng).
@@ -396,4 +419,96 @@ async function staffDetailModal(name) {
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
+}
+
+// ─── Tab 📸 Ảnh trưng bày theo tháng ──────────────────────────────────────
+function renderPhoto(d) {
+    const c = document.getElementById('km-content');
+    const t = d.totals || {};
+    const npps = d.npps || [];
+    const recent = d.recent || [];
+    const opts = [[-1, 'Tháng trước'], [0, 'Tháng này'], [1, 'Tháng sau']]
+        .map(([k, lab]) => {
+            const v = ymOffset(k);
+            return `<option value="${v}" ${v === d.month ? 'selected' : ''}>${lab} (${v.slice(5)}/${v.slice(0, 4)})</option>`;
+        }).join('');
+
+    c.innerHTML = `
+        <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+            <h3 class="npp-font-bold">📸 Cập nhật ảnh trưng bày — tháng ${escapeHtml(d.month_label || '')}</h3>
+            <select id="km-photo-month" class="npp-cn-input">${opts}</select>
+        </div>
+        ${recent.length ? `<div class="npp-risk-bar npp-mt-2" style="background:#ecfdf5;border-color:#bbf7d0;color:#065f46;">
+            <span>🔔 <strong>${recent.length}</strong> điểm bán vừa cập nhật ảnh trưng bày (7 ngày gần đây)</span>
+            <a href="javascript:void(0)" id="km-photo-recent" class="npp-link">Xem danh sách →</a></div>` : ''}
+        <div class="npp-kpi-grid npp-mt-3">
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Đã cập nhật</div>
+                <div class="npp-kpi-value" style="color:var(--npp-success);">${formatNumber(t.updated || 0)}</div>
+                <div class="npp-kpi-sub">/${formatNumber(t.active_points || 0)} điểm đang hoạt động</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Chưa cập nhật</div>
+                <div class="npp-kpi-value warning">${formatNumber(t.pending || 0)}</div>
+                <div class="npp-kpi-sub">cần đốc thúc nhân viên</div></div>
+            <div class="npp-kpi-card"><div class="npp-kpi-label">Tỷ lệ hoàn thành</div>
+                <div class="npp-kpi-value">${(t.pct || 0).toFixed(0)}%</div></div>
+        </div>
+        <p class="npp-text-sm npp-text-muted npp-mt-3">Bấm NPP để xổ danh sách. Mốc tính theo ngày chụp ảnh (captured_on), thiếu thì lấy ngày cập nhật lượt tham gia.</p>
+        ${npps.map((g, gi) => groupCard('ph' + gi, escapeHtml(g.customer_name),
+            `${g.count_updated} đã · <strong style="color:var(--npp-warning);">${g.count_pending} chưa</strong>`,
+            `${g.count_pending ? `<h4 class="npp-font-bold npp-mt-2" style="color:var(--npp-warning);">⚠ Chưa cập nhật (${g.count_pending})</h4>
+                <div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>Địa chỉ</th><th>Ảnh gần nhất</th></tr></thead>
+                <tbody>${g.pending.map((p) => `<tr class="km-ph-row" data-n="${escapeHtml(p.point)}" style="cursor:pointer;">
+                    <td data-label="Điểm bán"><strong>${escapeHtml(p.point_name)}</strong>${p.phone ? `<div class="npp-text-sm npp-text-muted">${escapeHtml(p.phone)}</div>` : ''}</td>
+                    <td data-label="Địa chỉ" class="npp-text-sm">${escapeHtml(p.address_line || '—')}</td>
+                    <td data-label="Ảnh gần nhất" class="npp-text-sm">${p.last_shot ? `${formatDate(p.last_shot)} <span class="npp-text-muted">(${p.days_since} ngày)</span>` : '<span style="color:var(--npp-danger);">Chưa có ảnh</span>'}</td>
+                </tr>`).join('')}</tbody></table></div>` : ''}
+             ${g.count_updated ? `<h4 class="npp-font-bold npp-mt-3" style="color:var(--npp-success);">✅ Đã cập nhật (${g.count_updated})</h4>
+                <div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>Ảnh gần nhất</th></tr></thead>
+                <tbody>${g.updated.map((p) => `<tr class="km-ph-row" data-n="${escapeHtml(p.point)}" style="cursor:pointer;">
+                    <td data-label="Điểm bán"><strong>${escapeHtml(p.point_name)}</strong></td>
+                    <td data-label="Ảnh gần nhất" class="npp-text-sm">${p.last_shot ? formatDate(p.last_shot) : '—'}</td>
+                </tr>`).join('')}</tbody></table></div>` : ''}`)).join('')}
+    `;
+    bindGroupToggles();
+    document.getElementById('km-photo-month').addEventListener('change', (e) => {
+        _photoMonth = e.target.value; loadTab('anh');
+    });
+    c.querySelectorAll('.km-ph-row').forEach((tr) => tr.addEventListener('click', () => pointDetailModal(tr.dataset.n)));
+    const rc = document.getElementById('km-photo-recent');
+    if (rc) rc.addEventListener('click', () => showModal({
+        title: '🔔 Ảnh trưng bày vừa cập nhật',
+        body: `<div style="overflow-x:auto;"><table class="npp-table">
+            <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Lúc</th></tr></thead>
+            <tbody>${recent.map((r) => `<tr>
+                <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name || '')}</strong></td>
+                <td data-label="NPP">${escapeHtml(r.npp || '—')}</td>
+                <td data-label="Chương trình" class="npp-text-sm">${escapeHtml(r.program || '—')}</td>
+                <td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(r.staff || '—')}</td>
+                <td data-label="Lúc" class="npp-text-sm">${r.at ? formatDate(r.at) : ''}</td>
+            </tr>`).join('')}</tbody></table></div>`,
+    }));
+}
+
+// ─── Tab ❌ Điểm bán bị từ chối ───────────────────────────────────────────
+function renderRejected(rows) {
+    const c = document.getElementById('km-content');
+    if (!rows.length) {
+        c.innerHTML = '<div class="npp-empty"><div class="npp-empty-icon">✅</div><div class="npp-empty-title">Không có lượt nào bị từ chối</div></div>';
+        return;
+    }
+    c.innerHTML = `<div class="npp-card">
+        <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:8px;">
+            <h3 class="npp-font-bold">❌ Điểm bán bị từ chối</h3>
+            <span class="npp-badge npp-badge-danger">${rows.length} lượt</span></div>
+        <div style="overflow-x:auto;"><table class="npp-table npp-mt-2">
+            <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Lý do từ chối</th><th>Ngày</th></tr></thead>
+            <tbody>${rows.map((r) => `<tr class="km-prow" data-n="${escapeHtml(r.name)}" style="cursor:pointer;">
+                <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name)}</strong></td>
+                <td data-label="NPP">${escapeHtml(r.npp || '—')}</td>
+                <td data-label="Chương trình" class="npp-text-sm">${escapeHtml(r.program_name || '—')}</td>
+                <td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(r.staff || '—')}</td>
+                <td data-label="Lý do" class="npp-text-sm" style="color:var(--npp-danger);">${escapeHtml(r.reject_reason || '—')}</td>
+                <td data-label="Ngày" class="npp-text-sm">${r.modified ? formatDate(r.modified) : ''}</td>
+            </tr>`).join('')}</tbody></table></div>
+        <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để xem chi tiết + ảnh, và <strong>duyệt lại</strong> nếu nhân viên đã khắc phục.</p></div>`;
+    c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
 }

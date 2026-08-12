@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, getdate, now_datetime
+from frappe.utils import add_days, add_months, get_first_day, get_last_day, getdate, now_datetime
 
 from ._utils import salep_photos, salep_photos_map
 
@@ -192,7 +192,8 @@ def program_detail(program: str) -> dict:
         b["total"] += 1
         # Danh sách điểm bán tham gia (đầy đủ) theo NPP — cho list xổ/thu ở UI.
         grp = parts_by_npp.setdefault(d, {"customer": d, "customer_name": cn.get(d, d), "approved": 0, "items": []})
-        grp["items"].append({"name": p["name"], "point_name": pt_names.get(p["display_point"]) or p["display_point"],
+        grp["items"].append({"name": p["name"], "display_point": p.get("display_point"),
+                             "point_name": pt_names.get(p["display_point"]) or p["display_point"],
                              "workflow_state": st, "staff": sn.get(p.get("owner")) or p.get("owner"),
                              "date": str(p["modified"]) if p.get("modified") else None})
         if st == APPROVED:
@@ -203,7 +204,8 @@ def program_detail(program: str) -> dict:
         bs = by_staff_map.setdefault(o, {"user": o, "full_name": sn.get(o, o),
                                          "distributor": p.get("distributor"), "total": 0, "approved": 0, "items": []})
         bs["total"] += 1
-        bs["items"].append({"name": p["name"], "point_name": pt_names.get(p["display_point"]) or p["display_point"],
+        bs["items"].append({"name": p["name"], "display_point": p.get("display_point"),
+                            "point_name": pt_names.get(p["display_point"]) or p["display_point"],
                             "workflow_state": st, "date": str(p["modified"]) if p.get("modified") else None})
         if st == APPROVED:
             b["approved"] += 1
@@ -462,3 +464,130 @@ def staff_detail(name: str) -> dict:
                   "approved": sum(1 for x in parts if x.get("workflow_state") == APPROVED),
                   "points": len({x["display_point"] for x in parts if x.get("display_point")})},
     }
+
+
+# ─── Theo dõi cập nhật ảnh trưng bày THEO THÁNG ───────────────────────────────
+@frappe.whitelist()
+def photo_refresh(month: str | None = None, days_recent: int = 7) -> dict:
+    """Điểm bán ĐÃ / CHƯA cập nhật ảnh trưng bày trong tháng `month` ('YYYY-MM',
+    mặc định tháng hiện tại) — để đốc thúc nhân viên chụp lại ảnh hằng tháng.
+
+    Mốc thời gian của 1 ảnh = Display Photo.captured_on; thiếu thì lấy
+    Display Participation.modified. `recent` = ảnh mới cập nhật trong N ngày
+    (dùng làm thông báo trên UI).
+    """
+    _guard()
+    _require_salep()
+    today = getdate()
+    base = getdate(month + "-01") if month else today
+    m_from, m_to = get_first_day(base), get_last_day(base)
+
+    pts = frappe.get_all("Display Point", filters={"is_active": 1},
+                         fields=["name", "point_name", "distributor", "phone", "address_line"],
+                         order_by="point_name asc")
+    if not pts:
+        return {"month": base.strftime("%Y-%m"), "month_label": base.strftime("%m/%Y"),
+                "totals": {"active_points": 0, "updated": 0, "pending": 0, "pct": 0, "recent": 0},
+                "npps": [], "recent": []}
+
+    # Ảnh gần nhất + có ảnh trong tháng hay không, theo TỪNG điểm bán.
+    agg = {}
+    try:
+        for r in frappe.db.sql(
+            """SELECT dp.display_point AS point,
+                      MAX(COALESCE(ph.captured_on, dp.modified)) AS last_shot,
+                      SUM(CASE WHEN DATE(COALESCE(ph.captured_on, dp.modified))
+                               BETWEEN %s AND %s THEN 1 ELSE 0 END) AS in_month
+               FROM `tabDisplay Participation` dp
+               LEFT JOIN `tabDisplay Photo` ph
+                 ON ph.parent = dp.name AND ph.parenttype = 'Display Participation'
+                AND ph.parentfield = 'display_photos'
+               WHERE IFNULL(dp.display_point,'') <> ''
+               GROUP BY dp.display_point""", (m_from, m_to), as_dict=True):
+            agg[r["point"]] = r
+    except Exception:
+        frappe.log_error("promo_admin.photo_refresh", frappe.get_traceback())
+
+    cn = _cust_names({p.get("distributor") for p in pts})
+    groups: dict = {}
+    n_up = n_pending = 0
+    for p in pts:
+        a = agg.get(p["name"]) or {}
+        last = a.get("last_shot")
+        item = {"point": p["name"], "point_name": p.get("point_name") or p["name"],
+                "phone": p.get("phone"), "address_line": p.get("address_line"),
+                "last_shot": str(last) if last else None,
+                "days_since": (getdate(last) and (today - getdate(last)).days) if last else None}
+        d = p.get("distributor") or "—"
+        g = groups.setdefault(d, {"customer": d, "customer_name": cn.get(d, d),
+                                  "updated": [], "pending": []})
+        if (a.get("in_month") or 0) > 0:
+            g["updated"].append(item)
+            n_up += 1
+        else:
+            g["pending"].append(item)
+            n_pending += 1
+    for g in groups.values():
+        g["count_updated"] = len(g["updated"])
+        g["count_pending"] = len(g["pending"])
+        g["pending"].sort(key=lambda x: (x["days_since"] is not None, -(x["days_since"] or 0)))
+
+    # Thông báo: ảnh vừa cập nhật trong N ngày gần đây.
+    recent = []
+    try:
+        since = add_days(today, -int(days_recent or 7))
+        ptn, sn, pgn = _point_names(), _staff_names(), _program_names()
+        for r in frappe.db.sql(
+            """SELECT dp.display_point AS point, dp.promotion_program AS prog, dp.owner AS owner,
+                      dp.distributor AS npp, MAX(COALESCE(ph.captured_on, dp.modified)) AS at
+               FROM `tabDisplay Participation` dp
+               LEFT JOIN `tabDisplay Photo` ph
+                 ON ph.parent = dp.name AND ph.parenttype = 'Display Participation'
+                AND ph.parentfield = 'display_photos'
+               WHERE DATE(COALESCE(ph.captured_on, dp.modified)) >= %s
+                 AND IFNULL(dp.display_point,'') <> ''
+               GROUP BY dp.display_point, dp.promotion_program, dp.owner, dp.distributor
+               ORDER BY at DESC LIMIT 50""", (since,), as_dict=True):
+            recent.append({"point_name": ptn.get(r["point"]) or r["point"],
+                           "program": pgn.get(r["prog"]) or r["prog"],
+                           "staff": sn.get(r["owner"]) or r["owner"],
+                           "npp": cn.get(r["npp"]) or r["npp"],
+                           "at": str(r["at"]) if r.get("at") else None})
+    except Exception:
+        recent = []
+
+    total = n_up + n_pending
+    return {
+        "month": base.strftime("%Y-%m"), "month_label": base.strftime("%m/%Y"),
+        "from": str(m_from), "to": str(m_to),
+        "totals": {"active_points": total, "updated": n_up, "pending": n_pending,
+                   "pct": (n_up / total * 100) if total else 0, "recent": len(recent)},
+        "npps": sorted(groups.values(), key=lambda x: x["count_pending"], reverse=True),
+        "recent": recent,
+    }
+
+
+# ─── Điểm bán bị TỪ CHỐI ──────────────────────────────────────────────────────
+@frappe.whitelist()
+def rejected_participations(program: str | None = None) -> list[dict]:
+    """Danh sách lượt tham gia bị TỪ CHỐI (kèm lý do) để theo dõi & xử lý lại."""
+    _guard()
+    _require_salep()
+    filters = {"workflow_state": REJECTED}
+    if program:
+        filters["promotion_program"] = program
+    rows = frappe.get_all("Display Participation", filters=filters,
+                          fields=["name", "display_point", "promotion_program", "distributor",
+                                  "owner", "reject_reason", "modified"],
+                          order_by="modified desc", limit_page_length=500)
+    if not rows:
+        return []
+    pt, pg, sn = _point_names(), _program_names(), _staff_names()
+    cn = _cust_names({r["distributor"] for r in rows})
+    for r in rows:
+        r["point_name"] = pt.get(r["display_point"]) or r["display_point"]
+        r["program_name"] = pg.get(r["promotion_program"]) or r["promotion_program"]
+        r["npp"] = cn.get(r.get("distributor")) or r.get("distributor")
+        r["staff"] = sn.get(r.get("owner")) or r.get("owner")
+        r["modified"] = str(r["modified"]) if r.get("modified") else None
+    return rows
