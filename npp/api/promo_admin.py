@@ -450,7 +450,8 @@ def staff_detail(name: str) -> dict:
     parts = frappe.get_all("Display Participation", filters={"owner": s.get("user")},
                            fields=["name", "display_point", "promotion_program", "workflow_state", "modified"],
                            order_by="modified desc") if s.get("user") else []
-    activity = [{"name": x["name"], "point": ptn.get(x["display_point"]) or x["display_point"],
+    activity = [{"name": x["name"], "display_point": x.get("display_point"),
+                 "point": ptn.get(x["display_point"]) or x["display_point"],
                  "program": pg.get(x["promotion_program"]) or x["promotion_program"],
                  "workflow_state": x.get("workflow_state"),
                  "date": str(x["modified"]) if x.get("modified") else None} for x in parts]

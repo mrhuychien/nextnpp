@@ -413,9 +413,13 @@ async function staffDetailModal(name) {
                 </div>
                 <h4 class="npp-font-bold npp-mt-3">Hoạt động (${acts.length})</h4>
                 ${acts.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th></tr></thead>
-                    <tbody>${acts.map((a) => `<tr><td data-label="Điểm bán"><strong>${escapeHtml(a.point || '—')}</strong></td><td data-label="Chương trình" class="npp-text-sm">${escapeHtml(a.program || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[a.workflow_state] || 'muted'}">${escapeHtml(a.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${a.date ? formatDate(a.date) : ''}</td></tr>`).join('')}</tbody></table></div>`
+                    <tbody>${acts.map((a) => `<tr class="${a.display_point ? 'km-sd-row' : ''}" ${a.display_point ? `data-p="${escapeHtml(a.display_point)}" style="cursor:pointer;"` : ''}><td data-label="Điểm bán"><strong>${escapeHtml(a.point || '—')}</strong></td><td data-label="Chương trình" class="npp-text-sm">${escapeHtml(a.program || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[a.workflow_state] || 'muted'}">${escapeHtml(a.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${a.date ? formatDate(a.date) : ''}</td></tr>`).join('')}</tbody></table></div>
+                    <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 điểm bán để xem chi tiết: thông tin, hình ảnh, các chương trình đã tham gia và ảnh từng chương trình.</p>`
                     : '<div class="npp-text-muted npp-mt-2">Chưa có hoạt động</div>'}`,
         });
+        const mount = document.getElementById('npp-modal-mount');
+        if (mount) mount.querySelectorAll('.km-sd-row').forEach((tr) =>
+            tr.addEventListener('click', () => pointDetailModal(tr.dataset.p)));
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
