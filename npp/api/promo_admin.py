@@ -549,7 +549,7 @@ def photo_refresh(month: str | None = None, days_recent: int = 7) -> dict:
                  AND IFNULL(dp.display_point,'') <> ''
                GROUP BY dp.display_point, dp.promotion_program, dp.owner, dp.distributor
                ORDER BY at DESC LIMIT 50""", (since,), as_dict=True):
-            recent.append({"point_name": ptn.get(r["point"]) or r["point"],
+            recent.append({"point": r["point"], "point_name": ptn.get(r["point"]) or r["point"],
                            "program": pgn.get(r["prog"]) or r["prog"],
                            "staff": sn.get(r["owner"]) or r["owner"],
                            "npp": cn.get(r["npp"]) or r["npp"],

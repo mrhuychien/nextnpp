@@ -500,18 +500,28 @@ function renderPhoto(d) {
     });
     c.querySelectorAll('.km-ph-row').forEach((tr) => tr.addEventListener('click', () => pointDetailModal(tr.dataset.n)));
     const rc = document.getElementById('km-photo-recent');
-    if (rc) rc.addEventListener('click', () => { showModal({
+    if (rc) rc.addEventListener('click', () => recentPhotoModal(recent));
+}
+
+// Danh sách điểm bán vừa cập nhật ảnh — bấm 1 dòng để xem chi tiết điểm bán.
+function recentPhotoModal(recent) {
+    showModal({
         title: '🔔 Ảnh trưng bày vừa cập nhật',
         body: `${backBar(null)}<div style="overflow-x:auto;"><table class="npp-table">
             <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Lúc</th></tr></thead>
-            <tbody>${recent.map((r) => `<tr>
+            <tbody>${(recent || []).map((r) => `<tr class="${r.point ? 'km-rc-row' : ''}" ${r.point ? `data-p="${escapeHtml(r.point)}" style="cursor:pointer;"` : ''}>
                 <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name || '')}</strong></td>
                 <td data-label="NPP">${escapeHtml(r.npp || '—')}</td>
                 <td data-label="Chương trình" class="npp-text-sm">${escapeHtml(r.program || '—')}</td>
                 <td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(r.staff || '—')}</td>
                 <td data-label="Lúc" class="npp-text-sm">${r.at ? formatDate(r.at) : ''}</td>
-            </tr>`).join('')}</tbody></table></div>`,
-    }); bindBack(null); });
+            </tr>`).join('')}</tbody></table></div>
+            <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 điểm bán để xem chi tiết: thông tin, hình ảnh, chương trình tham gia.</p>`,
+    });
+    bindBack(null);
+    const mount = document.getElementById('npp-modal-mount');
+    if (mount) mount.querySelectorAll('.km-rc-row').forEach((tr) =>
+        tr.addEventListener('click', () => pointDetailModal(tr.dataset.p, () => recentPhotoModal(recent))));
 }
 
 // ─── Tab ❌ Điểm bán bị từ chối ───────────────────────────────────────────
