@@ -23,6 +23,17 @@ const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt':
 let _pgStaff = [];   // by_staff của chương trình đang mở (để mở modal điểm bán theo NV)
 let _photoMonth = null;   // 'YYYY-MM' đang xem ở tab Ảnh theo tháng (null = tháng này)
 
+// Điều hướng giữa các modal lồng nhau: mỗi hàm mở modal nhận thêm `back` — một
+// hàm mở LẠI màn trước. Có back → hiện "← Quay lại"; không có (mở từ trang) →
+// "← Quay lại danh sách" = đóng modal, trả về đúng danh sách đang đứng.
+function backBar(back) {
+    return `<div style="margin:-4px 0 8px;"><a href="javascript:void(0)" id="km-mback" class="npp-link">← ${back ? 'Quay lại' : 'Quay lại danh sách'}</a></div>`;
+}
+function bindBack(back) {
+    const b = document.getElementById('km-mback');
+    if (b) b.addEventListener('click', () => (back ? back() : closeModal()));
+}
+
 function ymOffset(k) {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + k);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -104,7 +115,7 @@ function renderPending(rows) {
     c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
 }
 
-async function participationModal(name) {
+async function participationModal(name, back) {
     showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:240px;"></div>' });
     try {
         const d = await api.call('npp.api.promo_admin.participation_detail', { name });
@@ -115,6 +126,7 @@ async function participationModal(name) {
         showModal({
             title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
             body: html`
+                ${backBar(back)}
                 <div class="npp-card" style="margin-top:0;">
                     <div class="npp-flex npp-justify-between"><span class="npp-text-muted">Chương trình</span><strong style="text-align:right;">${escapeHtml(pg.program_name || '')}</strong></div>
                     <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">NPP</span><strong>${escapeHtml(d.npp || '—')}</strong></div>
@@ -141,8 +153,10 @@ async function participationModal(name) {
             document.getElementById('pa-reject').addEventListener('click', () => rejectP(name));
         }
         if (rejected) document.getElementById('pa-reapprove').addEventListener('click', () => approveP(name, 'tc'));
+        bindBack(back);
         const pl = document.getElementById('pa-point');
-        if (pl) pl.addEventListener('click', () => pointDetailModal(p.display_point));
+        // Giữ nguyên chuỗi back: từ chi tiết điểm bán quay lại ĐÚNG modal này.
+        if (pl) pl.addEventListener('click', () => pointDetailModal(p.display_point, () => participationModal(name, back)));
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
@@ -259,12 +273,13 @@ async function programDetail(program) {
 }
 
 // Danh sách điểm bán của 1 nhân viên trong chương trình đang mở.
-function staffPointsModal(s) {
+function staffPointsModal(s, back) {
     if (!s) return;
     const items = s.items || [];
     showModal({
         title: '👤 ' + escapeHtml(s.full_name || ''),
         body: html`
+            ${backBar(back)}
             <div class="npp-text-sm npp-text-muted">${escapeHtml(s.customer_name || '—')} · ${items.length} điểm bán · ${formatNumber(s.approved || 0)} đã duyệt</div>
             ${items.length ? `<div style="overflow-x:auto;"><table class="npp-table npp-mt-2"><thead><tr><th>Điểm bán</th><th class="npp-text-center">Trạng thái</th><th>Ngày</th><th></th></tr></thead>
                 <tbody>${items.map((x) => `<tr class="km-prow" data-n="${escapeHtml(x.name)}" style="cursor:pointer;"><td data-label="Điểm bán"><strong>${escapeHtml(x.point_name)}</strong></td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[x.workflow_state] || 'muted'}">${escapeHtml(x.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${x.date ? formatDate(x.date) : ''}</td>
@@ -272,12 +287,15 @@ function staffPointsModal(s) {
                 <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để xem lượt tham gia + ảnh chương trình · 🏪 xem chi tiết điểm bán.</p>`
                 : '<div class="npp-text-muted npp-mt-2">Nhân viên chưa có điểm bán trong chương trình này.</div>'}`,
     });
+    bindBack(back);
     const mount = document.getElementById('npp-modal-mount');
     if (!mount) return;
+    const reopen = () => staffPointsModal(s, back);
     mount.querySelectorAll('.km-ptbtn').forEach((b) => b.addEventListener('click', (e) => {
-        e.stopPropagation(); pointDetailModal(b.dataset.p);
+        e.stopPropagation(); pointDetailModal(b.dataset.p, reopen);
     }));
-    mount.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
+    mount.querySelectorAll('.km-prow').forEach((tr) =>
+        tr.addEventListener('click', () => participationModal(tr.dataset.n, reopen)));
 }
 
 // Card NPP có thể xổ/thu — mặc định THU GỌN (chỉ thấy tên NPP + số lượng).
@@ -357,7 +375,7 @@ function renderStaff(d) {
 }
 
 // ─── Modal chi tiết Điểm bán / Nhân viên ──────────────────────────────────
-async function pointDetailModal(name) {
+async function pointDetailModal(name, back) {
     showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:220px;"></div>' });
     try {
         const d = await api.call('npp.api.promo_admin.point_detail', { name });
@@ -366,6 +384,7 @@ async function pointDetailModal(name) {
         showModal({
             title: '🏪 ' + escapeHtml(p.point_name || name),
             body: html`
+                ${backBar(back)}
                 <div class="npp-card" style="margin-top:0;">
                     <div class="npp-flex npp-justify-between"><span class="npp-text-muted">NPP</span><strong style="text-align:right;">${escapeHtml(p.npp || '—')}</strong></div>
                     <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Địa chỉ</span><strong style="text-align:right;">${escapeHtml(p.address_line || '—')}</strong></div>
@@ -385,12 +404,13 @@ async function pointDetailModal(name) {
                     <tbody>${acts.map((a) => `<tr><td data-label="Chương trình">${escapeHtml(a.program || '—')}</td><td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(a.staff || '—')}</td><td data-label="Trạng thái" class="npp-text-center"><span class="npp-badge npp-badge-${WF_BADGE[a.workflow_state] || 'muted'}">${escapeHtml(a.workflow_state || '—')}</span></td><td data-label="Ngày" class="npp-text-sm">${a.date ? formatDate(a.date) : ''}</td></tr>`).join('')}</tbody></table></div>`
                     : '<div class="npp-text-muted npp-mt-2">Chưa có hoạt động</div>'}`,
         });
+        bindBack(back);
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
 }
 
-async function staffDetailModal(name) {
+async function staffDetailModal(name, back) {
     showModal({ title: 'Đang tải…', body: '<div class="npp-skeleton" style="height:220px;"></div>' });
     try {
         const d = await api.call('npp.api.promo_admin.staff_detail', { name });
@@ -398,6 +418,7 @@ async function staffDetailModal(name) {
         showModal({
             title: '👤 ' + escapeHtml(s.full_name || name),
             body: html`
+                ${backBar(back)}
                 <div class="npp-card" style="margin-top:0;">
                     <div class="npp-flex npp-justify-between"><span class="npp-text-muted">NPP</span><strong style="text-align:right;">${escapeHtml(s.npp || '—')}</strong></div>
                     <div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Điện thoại</span><strong>${escapeHtml(s.phone || '—')}</strong></div>
@@ -417,9 +438,10 @@ async function staffDetailModal(name) {
                     <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 điểm bán để xem chi tiết: thông tin, hình ảnh, các chương trình đã tham gia và ảnh từng chương trình.</p>`
                     : '<div class="npp-text-muted npp-mt-2">Chưa có hoạt động</div>'}`,
         });
+        bindBack(back);
         const mount = document.getElementById('npp-modal-mount');
         if (mount) mount.querySelectorAll('.km-sd-row').forEach((tr) =>
-            tr.addEventListener('click', () => pointDetailModal(tr.dataset.p)));
+            tr.addEventListener('click', () => pointDetailModal(tr.dataset.p, () => staffDetailModal(name, back))));
     } catch (err) {
         showModal({ title: '⚠️ Lỗi', body: errBox(err && err.message) });
     }
@@ -478,9 +500,9 @@ function renderPhoto(d) {
     });
     c.querySelectorAll('.km-ph-row').forEach((tr) => tr.addEventListener('click', () => pointDetailModal(tr.dataset.n)));
     const rc = document.getElementById('km-photo-recent');
-    if (rc) rc.addEventListener('click', () => showModal({
+    if (rc) rc.addEventListener('click', () => { showModal({
         title: '🔔 Ảnh trưng bày vừa cập nhật',
-        body: `<div style="overflow-x:auto;"><table class="npp-table">
+        body: `${backBar(null)}<div style="overflow-x:auto;"><table class="npp-table">
             <thead><tr><th>Điểm bán</th><th>NPP</th><th>Chương trình</th><th>Nhân viên</th><th>Lúc</th></tr></thead>
             <tbody>${recent.map((r) => `<tr>
                 <td data-label="Điểm bán"><strong>${escapeHtml(r.point_name || '')}</strong></td>
@@ -489,7 +511,7 @@ function renderPhoto(d) {
                 <td data-label="Nhân viên" class="npp-text-sm">${escapeHtml(r.staff || '—')}</td>
                 <td data-label="Lúc" class="npp-text-sm">${r.at ? formatDate(r.at) : ''}</td>
             </tr>`).join('')}</tbody></table></div>`,
-    }));
+    }); bindBack(null); });
 }
 
 // ─── Tab ❌ Điểm bán bị từ chối ───────────────────────────────────────────
