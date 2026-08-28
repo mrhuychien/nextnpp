@@ -91,9 +91,23 @@ export async function render({ container, query }) {
         if (!input) return;
         const card = input.closest('.npp-product-card');
         const code = card.dataset.code;
-        const v = Math.min(999, Math.max(0, parseInt(input.value, 10) || 0));
-        input.value = v; QTY[code] = v;
+        const raw = input.value;
+        if (raw === '') { QTY[code] = 0; updateSummary(); return; }  // đang gõ dở — ĐỪNG ép về 0
+        const v = Math.min(999, Math.max(0, parseInt(raw, 10) || 0));
+        if (String(v) !== raw) input.value = v;   // chỉ ghi đè khi thật sự phải kẹp giá trị
+        QTY[code] = v;
         updateSummary();
+    });
+    // Chạm vào ô số lượng → bôi đen sẵn để gõ đè luôn, khỏi phải xoá số 0.
+    document.getElementById('npp-dh-grid').addEventListener('focusin', (e) => {
+        const input = e.target.closest('.npp-qty-input');
+        if (!input) return;
+        try { input.select(); } catch { /* bỏ qua */ }
+        if (input.value === '0') input.value = '';   // dự phòng khi trình duyệt không select được
+    });
+    document.getElementById('npp-dh-grid').addEventListener('focusout', (e) => {
+        const input = e.target.closest('.npp-qty-input');
+        if (input && input.value === '') input.value = '0';
     });
 
     await loadGroup(activeTab);
@@ -195,7 +209,7 @@ function renderGrid(codes) {
                 <div class="npp-product-price">${formatNumber(rateBox)}đ /thùng (${quycach} hộp)</div>
                 <div class="npp-qty-control">
                     <button class="npp-qty-btn" data-action="dec" type="button">−</button>
-                    <input class="npp-qty-input" type="number" min="0" max="999" value="${qty}">
+                    <input class="npp-qty-input" type="number" inputmode="numeric" min="0" max="999" value="${qty}">
                     <button class="npp-qty-btn" data-action="inc" type="button">+</button>
                 </div>
             </div>`;
@@ -272,7 +286,7 @@ function openOrderReview() {
                     <td data-label="SL thùng" class="npp-text-center">
                         <div class="npp-qty-control">
                             <button class="npp-qty-btn" data-act="dec" type="button">−</button>
-                            <input class="npp-qty-input npp-review-qty" type="number" min="0" max="999" value="${r.qty}">
+                            <input class="npp-qty-input npp-review-qty" type="number" inputmode="numeric" min="0" max="999" value="${r.qty}">
                             <button class="npp-qty-btn" data-act="inc" type="button">+</button>
                         </div>
                     </td>
@@ -315,8 +329,20 @@ function openOrderReview() {
     });
     table.addEventListener('input', (e) => {
         if (!e.target.classList.contains('npp-review-qty')) return;
-        e.target.value = Math.min(999, Math.max(0, parseInt(e.target.value, 10) || 0));
+        const raw = e.target.value;
+        if (raw === '') { recomputeReview(); return; }   // đang gõ dở — giữ ô trống
+        const v = Math.min(999, Math.max(0, parseInt(raw, 10) || 0));
+        if (String(v) !== raw) e.target.value = v;
         recomputeReview();
+    });
+    // Chạm vào ô SL trong bảng review → bôi đen sẵn để gõ đè luôn.
+    table.addEventListener('focusin', (e) => {
+        if (!e.target.classList.contains('npp-review-qty')) return;
+        try { e.target.select(); } catch { /* bỏ qua */ }
+        if (e.target.value === '0') e.target.value = '';
+    });
+    table.addEventListener('focusout', (e) => {
+        if (e.target.classList.contains('npp-review-qty') && e.target.value === '') e.target.value = '0';
     });
 
     document.getElementById('npp-dh-confirm').addEventListener('click', () => {
