@@ -4,6 +4,7 @@ import * as api from '../lib/api.js';
 import { showToast } from '../components/toast.js';
 import { showLoading, hideLoading } from '../components/loading.js';
 import { showModal, closeModal } from '../components/modal.js';
+import { openNumpad } from '../components/numpad.js';
 // _config.js nạp ĐỘNG kèm ?v= để bust cache 'immutable' của /assets — đổi tên
 // field/config có hiệu lực chỉ với F5, không cần hard-refresh.
 let PRICE_LIST, ITEM_GROUPS, ITEM_FIELDS, SI_FIELDS, ZALO_PHONE, cleanItemName;
@@ -98,16 +99,23 @@ export async function render({ container, query }) {
         QTY[code] = v;
         updateSummary();
     });
-    // Chạm vào ô số lượng → bôi đen sẵn để gõ đè luôn, khỏi phải xoá số 0.
-    document.getElementById('npp-dh-grid').addEventListener('focusin', (e) => {
+    // Chạm vào ô số lượng → mở BÀN PHÍM SỐ riêng (không dùng bàn phím hệ thống).
+    document.getElementById('npp-dh-grid').addEventListener('click', (e) => {
         const input = e.target.closest('.npp-qty-input');
         if (!input) return;
-        try { input.select(); } catch { /* bỏ qua */ }
-        if (input.value === '0') input.value = '';   // dự phòng khi trình duyệt không select được
-    });
-    document.getElementById('npp-dh-grid').addEventListener('focusout', (e) => {
-        const input = e.target.closest('.npp-qty-input');
-        if (input && input.value === '') input.value = '0';
+        const card = input.closest('.npp-product-card');
+        const code = card.dataset.code;
+        const item = itemsCache[code] || {};
+        const quycach = parseInt(item[ITEM_FIELDS.quycach], 10) || 1;
+        const rate = (pricesCache[code] || 0) * quycach;
+        input.blur();
+        openNumpad({
+            title: cleanItemName(item.item_name || code),
+            subtitle: rate ? `${formatNumber(rate)}đ / thùng` : '',
+            value: QTY[code] || 0,
+            onChange: (n) => { input.value = n; QTY[code] = n; updateSummary(); },
+            onDone: (n) => { input.value = n; QTY[code] = n; updateSummary(); },
+        });
     });
 
     await loadGroup(activeTab);
@@ -209,7 +217,7 @@ function renderGrid(codes) {
                 <div class="npp-product-price">${formatNumber(rateBox)}đ /thùng (${quycach} hộp)</div>
                 <div class="npp-qty-control">
                     <button class="npp-qty-btn" data-action="dec" type="button">−</button>
-                    <input class="npp-qty-input" type="number" inputmode="numeric" min="0" max="999" value="${qty}">
+                    <input class="npp-qty-input" type="text" inputmode="none" readonly min="0" max="999" value="${qty}">
                     <button class="npp-qty-btn" data-action="inc" type="button">+</button>
                 </div>
             </div>`;
@@ -286,7 +294,7 @@ function openOrderReview() {
                     <td data-label="SL thùng" class="npp-text-center">
                         <div class="npp-qty-control">
                             <button class="npp-qty-btn" data-act="dec" type="button">−</button>
-                            <input class="npp-qty-input npp-review-qty" type="number" inputmode="numeric" min="0" max="999" value="${r.qty}">
+                            <input class="npp-qty-input npp-review-qty" type="text" inputmode="none" readonly min="0" max="999" value="${r.qty}">
                             <button class="npp-qty-btn" data-act="inc" type="button">+</button>
                         </div>
                     </td>
@@ -335,14 +343,21 @@ function openOrderReview() {
         if (String(v) !== raw) e.target.value = v;
         recomputeReview();
     });
-    // Chạm vào ô SL trong bảng review → bôi đen sẵn để gõ đè luôn.
-    table.addEventListener('focusin', (e) => {
-        if (!e.target.classList.contains('npp-review-qty')) return;
-        try { e.target.select(); } catch { /* bỏ qua */ }
-        if (e.target.value === '0') e.target.value = '';
-    });
-    table.addEventListener('focusout', (e) => {
-        if (e.target.classList.contains('npp-review-qty') && e.target.value === '') e.target.value = '0';
+    // Chạm vào ô SL trong bảng review → mở bàn phím số riêng.
+    table.addEventListener('click', (e) => {
+        const input = e.target.closest('.npp-review-qty');
+        if (!input) return;
+        const tr = input.closest('tr');
+        const code = tr.dataset.code;
+        const rate = parseFloat(tr.dataset.rate) || 0;
+        input.blur();
+        openNumpad({
+            title: cleanItemName((itemsCache[code] || {}).item_name || code),
+            subtitle: rate ? `${formatNumber(rate)}đ / thùng` : '',
+            value: parseInt(input.value, 10) || 0,
+            onChange: (n) => { input.value = n; recomputeReview(); },
+            onDone: (n) => { input.value = n; recomputeReview(); },
+        });
     });
 
     document.getElementById('npp-dh-confirm').addEventListener('click', () => {

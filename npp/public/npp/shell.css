@@ -850,6 +850,55 @@
     background: var(--npp-surface); cursor: pointer; font-size: .9rem; line-height: 1; }
 .npp-icon-act:hover { border-color: var(--npp-season-1); }
 
+/* ─── Bàn phím số riêng (nhập số lượng khi đặt hàng) ─── */
+/* z-index trên modal (9999) & loading (10000), dưới lightbox (10050). */
+.npp-numpad-mount {
+    position: fixed; inset: 0; z-index: 10040;
+    display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+.npp-numpad {
+    width: 100%; max-width: 420px;
+    background: var(--npp-surface);
+    border-radius: var(--npp-radius-xl) var(--npp-radius-xl) 0 0;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+    box-shadow: var(--npp-shadow-lg);
+    animation: nppModalUp 0.2s ease;
+}
+@media (min-width: 768px) {
+    .npp-numpad-mount { align-items: center; }
+    .npp-numpad { border-radius: var(--npp-radius-lg); }
+}
+.npp-numpad-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.npp-numpad-title { font-weight: 700; font-size: 0.95rem; line-height: 1.3; }
+.npp-numpad-sub { font-size: 0.78rem; color: var(--npp-text-3); margin-top: 2px; }
+.npp-numpad-display {
+    text-align: right; font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em;
+    padding: 6px 12px; margin: 8px 0;
+    background: var(--npp-surface-2); border-radius: var(--npp-radius-md);
+}
+.npp-numpad-display small { font-size: 0.8rem; font-weight: 600; color: var(--npp-text-3); }
+.npp-numpad-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.npp-numpad-quick button {
+    padding: 9px 0; border: 1px solid var(--npp-border); border-radius: 10px;
+    background: var(--npp-surface-2); color: var(--npp-text);
+    font-weight: 700; font-size: 0.85rem; cursor: pointer; font-family: inherit;
+}
+.npp-numpad-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.npp-numpad-grid button {
+    height: 54px; border: 1px solid var(--npp-border); border-radius: 12px;
+    background: var(--npp-surface); color: var(--npp-text);
+    font-size: 1.35rem; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+.npp-numpad-grid button:active, .npp-numpad-quick button:active { transform: scale(0.96); background: var(--npp-surface-2); }
+.npp-numpad-grid .npp-numpad-fn { background: var(--npp-surface-2); font-size: 1.1rem; color: var(--npp-text-2); }
+.npp-numpad-done {
+    width: 100%; margin-top: 10px; padding: 14px; border: none;
+    border-radius: var(--npp-radius-md); background: var(--npp-season-grad);
+    color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; font-family: inherit;
+}
+
 /* ─── Lightbox xem ảnh to ─── */
 img.npp-zoomable { cursor: zoom-in; }
 .npp-lightbox {
