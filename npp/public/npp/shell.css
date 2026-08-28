@@ -599,6 +599,9 @@
     padding: 0.75rem;
     display: flex; flex-direction: column;
     gap: 0.5rem;
+    /* Grid item mặc định min-width:auto = min-content → 1 input/tên dài có thể
+       làm giãn cột 1fr và tràn ngang. Ép 0 để card LUÔN co theo cột. */
+    min-width: 0;
 }
 .npp-product-img {
     aspect-ratio: 4/3;

@@ -217,7 +217,7 @@ function renderGrid(codes) {
                 <div class="npp-product-price">${formatNumber(rateBox)}đ /thùng (${quycach} hộp)</div>
                 <div class="npp-qty-control">
                     <button class="npp-qty-btn" data-action="dec" type="button">−</button>
-                    <input class="npp-qty-input" type="text" inputmode="none" readonly min="0" max="999" value="${qty}">
+                    <input class="npp-qty-input" type="text" inputmode="none" readonly size="1" value="${qty}">
                     <button class="npp-qty-btn" data-action="inc" type="button">+</button>
                 </div>
             </div>`;
@@ -294,7 +294,7 @@ function openOrderReview() {
                     <td data-label="SL thùng" class="npp-text-center">
                         <div class="npp-qty-control">
                             <button class="npp-qty-btn" data-act="dec" type="button">−</button>
-                            <input class="npp-qty-input npp-review-qty" type="text" inputmode="none" readonly min="0" max="999" value="${r.qty}">
+                            <input class="npp-qty-input npp-review-qty" type="text" inputmode="none" readonly size="1" value="${r.qty}">
                             <button class="npp-qty-btn" data-act="inc" type="button">+</button>
                         </div>
                     </td>
