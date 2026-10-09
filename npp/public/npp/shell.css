@@ -14,6 +14,7 @@
     --npp-text: #0f172a;
     --npp-text-2: #475569;
     --npp-text-3: #94a3b8;
+    --npp-text-muted: var(--npp-text-3);   /* alias — .npp-cn-flabel/.npp-cn-card-* & vài view dùng tên này */
     --npp-border: #e2e8f0;
 
     --npp-primary: #3b82f6;
@@ -981,3 +982,72 @@ img.npp-zoomable { cursor: zoom-in; }
 .npp-acct-logout { margin-top: 12px; width: 100%; padding: 8px 10px; border: 1px solid var(--npp-border);
     border-radius: 10px; background: var(--npp-surface-2); color: var(--npp-danger); font-weight: 700; cursor: pointer; }
 .npp-acct-logout:hover { background: var(--npp-danger); color: #fff; }
+
+/* ─── Phân trang bảng dài — components/data-table.js → paged() ─── */
+.npp-paged { scroll-margin-top: calc(var(--npp-header-h) + 8px); }
+.npp-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 0 2px; }
+.npp-pager-btn { padding: 6px 14px; border: 1px solid var(--npp-border); border-radius: 999px; background: var(--npp-surface);
+    color: var(--npp-text); font-weight: 700; font-size: .85rem; cursor: pointer; font-family: inherit; }
+.npp-pager-btn:disabled { opacity: .35; cursor: default; }
+.npp-pager-info { font-size: .82rem; font-weight: 600; color: var(--npp-text-2); }
+
+/* ─── Khuyến mại → NV phụ trách: lọc, chọn nhiều, thanh thao tác hàng loạt ─── */
+.npp-km-search { padding-left: .9rem; font-size: 16px; }   /* 16px: iOS không tự phóng to khi gõ */
+/* select rộng theo option DÀI NHẤT (tên NV) → chặn tràn ngang; mobile: 2 select/hàng, ô tìm cả hàng */
+.npp-km-filters select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+@media (min-width: 768px) { .npp-km-filters select { max-width: 280px; } }
+@media (max-width: 767px) {
+    .npp-km-filters select { flex: 1 1 140px; }
+    .npp-km-filters .npp-dh-search { flex-basis: 100%; }
+}
+.npp-km-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem;
+    margin-top: .5rem; font-size: .82rem; color: var(--npp-text-2); }
+.npp-km-result label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.npp-km-chk { width: 18px; height: 18px; accent-color: var(--npp-season-1); cursor: pointer; vertical-align: middle; flex: none; }
+.npp-table .npp-km-chkcell { cursor: pointer; }
+.npp-table tr.npp-km-sel > td { background: var(--npp-season-glow); }
+@media (min-width: 768px) { .npp-table .npp-km-chkcell { width: 40px; text-align: center; } }
+.npp-km-tab .npp-table .npp-badge, .npp-km-hist .npp-table .npp-badge { white-space: nowrap; }
+@media (max-width: 767px) {
+    /* thẻ mobile: nhãn trái giữ nguyên, MỌI phần nội dung dồn phải thành 1 cụm
+       (tên + "(đã nghỉ)", badge + ghi chú, ✅ + số lượt) thay vì bị space-between rải ra */
+    .npp-km-tab .npp-table td, .npp-km-hist .npp-table td { column-gap: .35rem; text-align: right; overflow-wrap: anywhere; }
+    .npp-km-tab .npp-table td::before, .npp-km-hist .npp-table td::before { flex: none; margin-right: auto; padding-right: .75rem; text-align: left; }
+    /* chế độ thẻ: ô "Chọn" là cả 1 dòng bấm được, checkbox bên phải */
+    .npp-table td.npp-km-chkcell { padding: .35rem 0; border-bottom: 1px dashed var(--npp-border); margin-bottom: .25rem; }
+    .npp-table tr.npp-km-sel { background: var(--npp-season-glow); border-color: var(--npp-season-1); }
+    .npp-table tr.npp-km-sel > td { background: transparent; }
+}
+.npp-km-tab .npp-card { scroll-margin-top: calc(var(--npp-header-h) + 8px); }   /* scrollIntoView không chui dưới header cố định */
+.npp-km-callout { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%;
+    margin-bottom: .5rem; padding: .85rem 1rem; border: 1px solid var(--npp-season-1); border-radius: var(--npp-radius-md);
+    background: var(--npp-season-glow); color: var(--npp-text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.npp-km-callout strong { font-size: 1.1rem; color: var(--npp-season-1); }
+.npp-km-callout:hover { box-shadow: var(--npp-shadow-md); }
+.npp-km-opts { max-height: 260px; overflow-y: auto; border: 1px solid var(--npp-border); border-radius: var(--npp-radius-sm); }
+.npp-km-opt { display: flex; align-items: center; gap: .6rem; padding: .6rem .75rem; border-bottom: 1px solid var(--npp-border);
+    cursor: pointer; font-size: .9rem; }
+.npp-km-opt:last-child { border-bottom: none; }
+.npp-km-opt[hidden] { display: none; }
+.npp-km-opt:has(input:checked) { background: var(--npp-season-glow); font-weight: 700; }
+.npp-km-opt input { width: 18px; height: 18px; accent-color: var(--npp-season-1); flex: none; }
+.npp-km-opt small { margin-left: auto; color: var(--npp-text-3); font-weight: 600; white-space: nowrap; }
+.npp-km-hist .npp-btn-primary:disabled { opacity: .5; cursor: default; }
+
+/* Thanh thao tác hàng loạt — cố định đáy, NGAY TRÊN bottom nav; nằm trong view (rời view là mất) */
+.npp-bulkbar { position: fixed; left: 0; right: 0; bottom: var(--npp-bottom-h); z-index: 55;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem;
+    padding: .6rem .75rem; background: rgba(255, 255, 255, 0.97); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--npp-border); box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08); }
+.npp-bulkbar[hidden] { display: none; }
+.npp-bulkbar-count { font-size: .875rem; font-weight: 600; margin-right: .25rem; }
+.npp-bulkbar-count strong { color: var(--npp-season-1); font-size: 1rem; }
+.npp-bulkbar button { width: auto; flex: none; padding: .55rem .9rem; font-size: .82rem; white-space: nowrap; }
+.npp-bulkbar button:disabled { opacity: .55; cursor: progress; }
+@media (max-width: 767px) {
+    /* 2 hàng: "Đã chọn N" + Bỏ chọn │ các thao tác — không chồng 3 hàng che danh sách */
+    .npp-bulkbar { padding: .5rem .5rem; gap: .4rem; }
+    .npp-bulkbar-count { flex: 1 1 55%; text-align: left; margin: 0; padding-left: .25rem; }
+    .npp-bulkbar button { order: 2; flex: 1 1 auto; min-height: 44px; padding: .5rem .6rem; }
+    .npp-bulkbar button[data-bulk="clear"] { order: 1; flex: 0 1 auto; }
+}
