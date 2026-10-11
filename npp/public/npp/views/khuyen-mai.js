@@ -9,22 +9,35 @@ import { paged } from '../components/data-table.js';
 import { renderPointsMap, refreshMap } from '../components/map.js';
 import { renderQR } from '../components/qr.js';
 import { galleryHtml } from '../components/lightbox.js';   // bấm ảnh → xem to (delegated) + lưới nhiều ảnh
+import {
+    payoutSectionHtml, bindPayoutSection, payoutKpiHtml, progressTableHtml, payoutListTable,
+    payStatusOptions, payOwnerOptions, payOwnerValid, filterPayRows,
+} from '../components/payout.js';   // trả thưởng 2 lần (salep doc/09)
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
 // NV phụ trách điểm bán = Display Point.owner; gán/chuyển điểm, nghỉ việc, lịch sử NV
 // gọi npp.api.promo.* → hàm lõi salep.api.npp_manage (salep doc/08).
+// Trả thưởng điểm bán 2 lần (tab 💰 Trả thưởng + mục trong chi tiết lượt đã duyệt) gọi
+// npp.api.promo.payout_progress / participation_payouts / record_payout / delete_payout → salep.api.payout (doc/09).
 
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
 const WF_STATES = ['Nháp', 'Chờ duyệt', 'Đã duyệt', 'Từ chối'];
-const TABS = ['nv', 'db', 'ct', 'bc'];
+const TABS = ['nv', 'db', 'ct', 'tt', 'bc'];
 const PAGE = 20;                  // dòng/trang cho danh sách dài
 const BULK_MAX = 1000;            // khớp salep npp_manage.BULK_MAX (điểm/lần gán)
 const PARTS_LIMIT = 2000;         // npp_participations trả tối đa 2000 lượt mới nhất (khớp promo.PARTS_LIMIT)
 const TARGET_NPP = '__npp__';     // đích "NPP giữ lại (chưa giao)" — khớp salep TARGET_NPP
 const OWNER_OTHER = '__other__';  // lọc Phụ trách = "Khác" (owner_kind other)
 const SALEP_OLD = 'Cần cập nhật app salep';
+const APPROVED = 'Đã duyệt';
+const PAY_ROWS_LIMIT = 5000;      // payout_progress trả tối đa 5000 lượt (khớp salep payout.progress)
+const PAY_EP = {                  // endpoint trả thưởng phía chủ NPP (components/payout.js nhận làm tham số)
+    get: 'npp.api.promo.participation_payouts',
+    record: 'npp.api.promo.record_payout',
+    remove: 'npp.api.promo.delete_payout',
+};
 
 let _staff = [];
 let _points = [];
@@ -44,11 +57,19 @@ const _selParts = new Set();      // lượt đã chọn (tab Chương trình)
 let _bulkBusy = false;
 let _hist = null;                 // {staff, data, pill, sel} lịch sử NV đang xem (giữ khi "← Quay lại")
 let _modalSeq = 0;                // modal tải dữ liệu: bỏ kết quả nếu người dùng đã mở/đóng modal khác
+let _pay = null;                  // payout_progress đang xem {totals, programs, rows}
+let _payFor = null;               // chương trình của _pay ('' = tất cả) — cache chỉ dùng khi khớp _payProg
+let _payProg = '';                // tab Trả thưởng: chương trình đang lọc ('' = tất cả)
+let _payPrograms = [];            // danh sách chương trình cho select (lấy từ lần tải KHÔNG lọc chương trình)
+let _paySeq = 0;                  // chống response cũ ghi đè (payout_progress)
+let _payLoaded = false;           // tab Trả thưởng đã tải sau lần renderBody gần nhất
+let _payf = {};                   // bộ lọc Trả thưởng {status, owner, q}
 
 function resetFilters() {
     _sf = { status: 'working', q: '' };
     _pf = { q: '', owner: '', status: '', joined: '' };
     _cf = { q: '', owner: '', state: '' };
+    _payf = { status: '', owner: '', q: '' };
 }
 resetFilters();
 
@@ -166,6 +187,7 @@ export async function render({ container, query }) {
     _tab = TABS.includes(query?.t) ? query.t : 'nv';
     resetFilters();
     _partsProg = '';
+    _payProg = ''; _pay = null; _payFor = null; _payPrograms = [];
     _parts = []; _ptRows = []; _paRows = [];
     _selPts.clear(); _selParts.clear();
     _hist = null; _bulkBusy = false;
@@ -218,6 +240,7 @@ function renderBody(d) {
     if (!ownerValid(_pf.owner)) _pf.owner = '';
     if (!ownerValid(_cf.owner)) _cf.owner = '';
     if (_partsProg && !programs.some((p) => p.program === _partsProg)) _partsProg = '';
+    _payLoaded = false;   // khung tab Trả thưởng vẽ lại → tải lại khi tab hiện (switchKmTab)
     const nLeft = staff.filter((s) => s.resigned).length;
     const hid = (k) => (_tab !== k ? ' hidden' : '');
     const tab = (k, label) => `<a href="javascript:void(0)" data-t="${k}"${_tab === k ? ' class="npp-active"' : ''}>${label}</a>`;
@@ -227,7 +250,7 @@ function renderBody(d) {
 
     document.getElementById('npp-km-body').innerHTML = html`
         <div class="npp-ql-nav" id="npp-km-tabs">
-            ${tab('nv', '👥 Nhân viên')}${tab('db', '🏪 Điểm bán')}${tab('ct', '🎯 Chương trình')}${tab('bc', '📊 Báo cáo')}
+            ${tab('nv', '👥 Nhân viên')}${tab('db', '🏪 Điểm bán')}${tab('ct', '🎯 Chương trình')}${tab('tt', '💰 Trả thưởng')}${tab('bc', '📊 Báo cáo')}
         </div>
 
         <!-- TAB Nhân viên -->
@@ -332,6 +355,28 @@ function renderBody(d) {
             </div>
         </div>
 
+        <!-- TAB Trả thưởng (2 lần / lượt đã duyệt — salep doc/09) -->
+        <div id="npp-km-tt" class="npp-km-tab"${hid('tt')}>
+            <div class="npp-card">
+                <h3 class="npp-font-bold">Tiến độ trả thưởng</h3>
+                <div class="npp-ql-filters npp-km-filters npp-mt-3">
+                    <select id="npp-km-ttprog" aria-label="Lọc theo chương trình"><option value="">Tất cả chương trình</option></select>
+                </div>
+                <div id="npp-km-ttprogress" class="npp-mt-3"><div class="npp-skeleton" style="height:160px;"></div></div>
+            </div>
+            <div class="npp-card npp-mt-3" id="npp-km-ttcard">
+                <h3 class="npp-font-bold">Điểm bán đủ điều kiện (lượt đã duyệt)</h3>
+                <div class="npp-ql-filters npp-km-filters npp-mt-3">
+                    <select id="npp-km-ttst" aria-label="Lọc theo trạng thái trả thưởng">${payStatusOptions([], _payf.status)}</select>
+                    <select id="npp-km-ttowner" aria-label="Lọc theo nhân viên phụ trách">${payOwnerOptions([], _payf.owner)}</select>
+                    <input id="npp-km-ttq" type="search" class="npp-dh-search npp-km-search" placeholder="Tìm điểm bán, SĐT, NV…" value="${attr(_payf.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+                </div>
+                <div class="npp-km-result"><span id="npp-km-ttinfo"></span><a href="javascript:void(0)" id="npp-km-ttclear" class="npp-link" hidden>✕ Xoá lọc</a></div>
+                <div id="npp-km-ttlist" class="npp-mt-2"><div class="npp-skeleton" style="height:160px;"></div></div>
+                <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để ghi / sửa / xoá trả thưởng (2 lần, kèm ảnh trả thưởng).</p>
+            </div>
+        </div>
+
         <!-- TAB Báo cáo -->
         <div id="npp-km-bc" class="npp-km-tab"${hid('bc')}>
             <div class="npp-kpi-grid">
@@ -354,6 +399,7 @@ function renderBody(d) {
     bindStaffFilters();
     bindPointFilters();
     bindPartFilters();
+    bindPayFilters();
     renderStaffList();
     renderPointList();
     switchKmTab(_tab);
@@ -371,6 +417,7 @@ function switchKmTab(t) {
         if (_partsMapDirty) drawPartsMap();
         else refreshMap(document.getElementById('npp-km-partsmap'));
     }
+    if (_tab === 'tt' && !_payLoaded) loadPayouts();   // tải khi mở tab (không tải sẵn cùng npp_overview)
     syncHash();
     updateBulkBar();   // thanh hàng loạt chỉ thuộc tab đang mở
 }
@@ -776,6 +823,187 @@ function partTable(slice) {
                 <td data-label="Cập nhật" class="npp-text-sm">${r.modified ? formatDate(r.modified) : ''}</td>
             </tr>`;
         }).join('')}</tbody></table></div>`;
+}
+
+// ─── TAB Trả thưởng: tiến độ + danh sách lượt đã duyệt ────────────────
+function payFiltered() { return !!(_payf.status || _payf.owner || _payf.q); }
+function bindPayFilters() {
+    const prog = document.getElementById('npp-km-ttprog');
+    if (!prog) return;
+    prog.addEventListener('change', () => setPayProgram(prog.value));
+    const st = document.getElementById('npp-km-ttst');
+    const owner = document.getElementById('npp-km-ttowner');
+    const q = document.getElementById('npp-km-ttq');
+    st.addEventListener('change', () => { _payf.status = st.value; renderPayList(); });
+    owner.addEventListener('change', () => { _payf.owner = owner.value; renderPayList(); });
+    q.addEventListener('input', debounce(() => { _payf.q = q.value || ''; renderPayList(); }, 200));
+    document.getElementById('npp-km-ttclear').addEventListener('click', () => {
+        _payf = { status: '', owner: '', q: '' };
+        st.value = ''; owner.value = ''; q.value = '';
+        renderPayList();
+    });
+    // Bấm 1 dòng chương trình ở bảng tiến độ → lọc theo chương trình đó (gán 1 lần, khung sống qua các lần vẽ)
+    document.getElementById('npp-km-ttprogress').onclick = (e) => {
+        const tr = e.target.closest('.npp-pay-progrow');
+        if (tr && tr.dataset.p && tr.dataset.p !== _payProg) setPayProgram(tr.dataset.p);
+    };
+}
+
+function setPayProgram(program) {
+    _payProg = program || '';
+    const sel = document.getElementById('npp-km-ttprog');
+    if (sel && sel.value !== _payProg) sel.value = _payProg;
+    loadPayouts();
+}
+
+async function loadPayouts() {
+    const box = document.getElementById('npp-km-ttprogress');
+    if (!box) return;
+    _payLoaded = true;
+    const prog = _payProg;
+    const seq = ++_paySeq;
+    if (_pay && _payFor === prog) renderPayouts();   // có dữ liệu cũ đúng chương trình → hiện ngay, tải lại ngầm
+    else {
+        box.innerHTML = '<div class="npp-skeleton" style="height:160px;"></div>';
+        const list = document.getElementById('npp-km-ttlist');
+        if (list) list.innerHTML = '<div class="npp-skeleton" style="height:160px;"></div>';
+    }
+    try {
+        const d = await api.call('npp.api.promo.payout_progress', { program: prog || undefined }) || {};
+        if (seq !== _paySeq || !document.getElementById('npp-km-ttprogress')) return;
+        if (!prog || !_payPrograms.length) _payPrograms = d.programs || [];
+        _pay = d; _payFor = prog;
+        renderPayouts();
+    } catch (err) {
+        if (seq !== _paySeq) return;
+        _payLoaded = false;   // mở lại tab → thử lại
+        const t = errText(err);
+        const el = document.getElementById('npp-km-ttprogress');
+        if (el) el.innerHTML = t.includes(SALEP_OLD)
+            ? `<div class="npp-note-block npp-note-npp">⚠️ ${escapeHtml(t)}</div>`
+            : `<div class="npp-text-muted">Chưa tải được tiến độ trả thưởng: ${escapeHtml(t)}</div>`;
+        const list = document.getElementById('npp-km-ttlist');
+        if (list) list.innerHTML = '';
+        setResult('tt', '', false);
+    }
+}
+
+// Vẽ select chương trình + KPI + bảng tiến độ + ô lọc (từ _pay), rồi danh sách
+function renderPayouts() {
+    const box = document.getElementById('npp-km-ttprogress');
+    if (!box || !_pay) return;
+    const programs = _pay.programs || [];
+    const rows = _pay.rows || [];
+    const sel = document.getElementById('npp-km-ttprog');
+    if (sel) {
+        const list = _payPrograms.length ? _payPrograms : programs;
+        sel.innerHTML = '<option value="">Tất cả chương trình</option>'
+            + list.map((p) => `<option value="${attr(p.program)}"${p.program === _payProg ? ' selected' : ''}>${escapeHtml(p.program_name || p.program)}</option>`).join('');
+    }
+    box.innerHTML = programs.length
+        ? `${payoutKpiHtml(_pay.totals)}<div class="npp-mt-3">${progressTableHtml(programs, _pay.totals, { selected: _payProg })}</div>
+            ${programs.length > 1 ? '<div class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 chương trình để xem riêng danh sách điểm bán của chương trình đó.</div>' : ''}`
+        : emptyState({ icon: '💰', title: 'Chưa có lượt đã duyệt', message: 'Lượt tham gia được duyệt sẽ hiện ở đây để theo dõi trả thưởng lần 1, lần 2.' });
+    if (!payOwnerValid(rows, _payf.owner)) _payf.owner = '';
+    const st = document.getElementById('npp-km-ttst');
+    if (st) st.innerHTML = payStatusOptions(rows, _payf.status);
+    const owner = document.getElementById('npp-km-ttowner');
+    if (owner) owner.innerHTML = payOwnerOptions(rows, _payf.owner);
+    renderPayList();
+}
+
+function renderPayList() {
+    const root = document.getElementById('npp-km-ttlist');
+    if (!root || !_pay) return;
+    const all = _pay.rows || [];
+    const rows = filterPayRows(all, _payf);
+    setResult('tt', `${formatNumber(rows.length)}/${formatNumber(all.length)} lượt`, payFiltered());
+    // Chạm trần → nói rõ, gợi ý chọn 1 chương trình (số liệu bảng tiến độ vẫn đủ — đếm ở server)
+    const capped = all.length >= PAY_ROWS_LIMIT
+        ? `<div class="npp-note-block npp-note-internal" style="margin:0 0 8px;">ℹ️ Đang hiện ${formatNumber(PAY_ROWS_LIMIT)} lượt đầu${_payProg ? '' : ' — chọn 1 chương trình để xem đủ'}.</div>`
+        : '';
+    root.innerHTML = rows.length
+        ? capped + paged({
+            rows, pageSize: PAGE,
+            render: (slice) => payoutListTable(slice, { showProgram: !_payProg }),
+            onDraw: (el) => {
+                el.onclick = (e) => {
+                    const tr = e.target.closest('.npp-pay-lrow');
+                    if (tr) payoutModal(tr.dataset.n);
+                };
+            },
+        })
+        : (all.length
+            ? emptyState({ icon: '🔍', title: 'Không có lượt phù hợp', message: 'Đổi bộ lọc hoặc bấm "Xoá lọc".' })
+            : emptyState({ icon: '📭', title: 'Chưa có lượt đã duyệt' }));
+}
+
+// Sau khi ghi/xoá trả thưởng: dữ liệu tab cũ → tải lại ngầm nếu đang mở tab, không thì để lần mở sau
+function payChanged() {
+    _payLoaded = false;
+    if (_tab === 'tt' && document.getElementById('npp-km-ttprogress')) loadPayouts();
+}
+
+// Modal trả thưởng của 1 lượt: thông tin + 2 lần (ghi / sửa / xoá — chủ NPP xoá được)
+async function payoutModal(name, back) {
+    if (!name) return;
+    const seq = ++_modalSeq;
+    loadingModal(seq);
+    let d;
+    try {
+        d = await api.call(PAY_EP.get, { name });
+    } catch (err) {
+        if (!modalAlive(seq)) return;
+        showModal({ title: '⚠️ Lỗi', body: `${back ? backBar(back) : ''}<div class="npp-text-muted">${escapeHtml(errText(err))}</div>` });
+        bindBack(back);
+        return;
+    }
+    if (!modalAlive(seq)) return;   // đã đóng / mở modal khác trong lúc tải
+    const row = ((_pay && _pay.rows) || []).find((r) => r.participation === name) || {};
+    const pointName = row.point_name || row.display_point || name;
+    const self = () => payoutModal(name, back);
+    showModal({
+        title: '💰 ' + escapeHtml(pointName),
+        body: html`${backBar(back)}
+            <div class="npp-card" style="margin-top:0;">
+                <div class="npp-flex npp-justify-between" style="gap:10px;"><span class="npp-text-muted">Chương trình</span><strong style="text-align:right;">${escapeHtml(row.program_name || row.promotion_program || '—')}</strong></div>
+                <div class="npp-flex npp-justify-between npp-mt-2" style="gap:10px;"><span class="npp-text-muted">Phụ trách</span><strong style="text-align:right;">${escapeHtml(row.staff_name || row.owner || '—')}</strong></div>
+                ${row.point_phone ? `<div class="npp-flex npp-justify-between npp-mt-2"><span class="npp-text-muted">Điện thoại</span><strong>${escapeHtml(row.point_phone)}</strong></div>` : ''}
+            </div>
+            <div id="km-paysec" class="npp-mt-3">${payoutSectionHtml(d, { canRecord: true, canDelete: true })}</div>
+            <div class="npp-mt-2"><a href="javascript:void(0)" id="km-paydetail" class="npp-link">🏪 Xem chi tiết lượt tham gia →</a></div>`,
+    });
+    bindBack(back);
+    bindPayoutSection(document.getElementById('km-paysec'), {
+        data: d, participation: name, pointName, endpoint: PAY_EP, back: self,
+        onDone: (r, alive) => { payChanged(); if (alive) self(); },
+    });
+    document.getElementById('km-paydetail').addEventListener('click', () => participationDetailModal(name, self));
+}
+
+// Mục Trả thưởng trong chi tiết lượt (tab Chương trình) — chỉ lượt Đã duyệt, tải lười
+async function loadPayBox(name, seq, pointName, self) {
+    const box = () => {
+        const b = document.getElementById('km-paybox');
+        return seq === _modalSeq && b && b.dataset.part === name ? b : null;
+    };
+    try {
+        const d = await api.call(PAY_EP.get, { name });
+        const b = box();
+        if (!b) return;   // đã đóng / sang modal khác
+        b.innerHTML = payoutSectionHtml(d, { canRecord: true, canDelete: true });
+        bindPayoutSection(b, {
+            data: d, participation: name, pointName, endpoint: PAY_EP, back: self,
+            onDone: (r, alive) => { payChanged(); if (alive) self(); },
+        });
+    } catch (err) {
+        const b = box();
+        if (!b) return;
+        const t = errText(err);
+        b.innerHTML = t.includes(SALEP_OLD)
+            ? `<div class="npp-note-block npp-note-npp">⚠️ ${escapeHtml(t)}</div>`
+            : `<div class="npp-text-sm npp-text-muted">Chưa tải được trả thưởng: ${escapeHtml(t)}</div>`;
+    }
 }
 
 // ─── Modal Gán NV phụ trách / Nghỉ việc ────────────────────────────────
@@ -1457,6 +1685,7 @@ async function participationDetailModal(name, back) {
         const p = d.participation || {}, pt = d.point || {}, pg = d.program || {};
         const row = _parts.find((x) => x.name === name);
         const imgGrid = galleryHtml(d.image_groups);
+        const approved = p.workflow_state === APPROVED;   // chỉ lượt đã duyệt mới có mục Trả thưởng
         showModal({
             title: '🏪 ' + escapeHtml(pt.point_name || p.display_point || ''),
             body: html`${backBar(back)}
@@ -1471,9 +1700,11 @@ async function participationDetailModal(name, back) {
                     ${(p.latitude && p.longitude) ? `<div class="npp-mt-2"><a href="https://www.google.com/maps?q=${p.latitude},${p.longitude}" target="_blank" rel="noopener" class="npp-link">📍 Mở bản đồ</a></div>` : ''}
                 </div>
                 <h4 class="npp-font-bold npp-mt-3">Hình ảnh tham gia</h4>
-                <div class="npp-mt-2">${imgGrid}</div>`,
+                <div class="npp-mt-2">${imgGrid}</div>
+                ${approved ? `<div id="km-paybox" class="npp-mt-3" data-part="${attr(name)}"><div class="npp-skeleton" style="height:120px;"></div></div>` : ''}`,
         });
         bindBack(back);
+        if (approved) loadPayBox(name, seq, pt.point_name || p.display_point || name, () => participationDetailModal(name, back));
     } catch (err) {
         if (!modalAlive(seq)) return;
         showModal({ title: '⚠️ Lỗi', body: `${back ? backBar(back) : ''}<div class="npp-text-muted">${escapeHtml(errText(err))}</div>` });

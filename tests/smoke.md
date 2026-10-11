@@ -123,6 +123,51 @@ Nghỉ việc:
 - [ ] Site có app `salep` cũ (chưa có `salep.api.npp_manage`) → bấm Gán / Nghỉ việc / Lịch sử báo
       "Cần cập nhật app salep (bench migrate) để dùng chức năng này."; tab Khuyến mại vẫn tải bình thường
 
+## Khuyến mại → 💰 Trả thưởng điểm bán (2 lần) `/khuyen-mai` + `/ql-km`
+Tham chiếu: `salep/doc/09_reward_payout.md`. Cần cả 2 app đã `bench migrate` (patch
+`salep.patches.v0_0_5.setup_reward_payout`) + `bench build` + `bench restart`.
+
+Pre-conditions:
+- NPP A có 1 chương trình "Đang chạy" với ≥3 lượt "Đã duyệt" + ≥1 lượt chưa duyệt; NPP B có ≥1 lượt đã duyệt
+- 1 tài khoản chỉ có role Accounts Manager (kế toán) và 1 tài khoản không có role quản lý nào
+- Điện thoại test có sẵn vài ảnh trong thư viện (ảnh chuyển khoản / biên nhận)
+
+`/npp` → Khuyến mại → tab 💰 Trả thưởng:
+- [ ] Bảng tiến độ theo chương trình: chỉ chương trình có lượt đã duyệt, "Đang chạy" lên trước;
+      Lần 1 x/N, Lần 2 y/N + % (N = số lượt Đã duyệt; % 1 số lẻ); khớp `payout_progress().programs`
+- [ ] Danh sách lượt (Điểm bán · Phụ trách · Lần 1 · Lần 2) chỉ có lượt Đã duyệt của NPP; chưa trả lên đầu,
+      rồi đã trả lần 1, rồi đủ 2 lần; lọc chương trình / trạng thái / phụ trách / tìm hoạt động
+- [ ] Chọn 1 chương trình (select hoặc bấm dòng bảng): bảng vẫn đủ mọi chương trình (dòng đang chọn tô
+      đậm), dòng "Tổng N chương trình" vẫn = cộng mọi dòng; 2 thẻ KPI + danh sách theo chương trình đang chọn
+- [ ] Bấm dòng → modal trả thưởng 2 lần (Lần 1 / Lần 2: ✓ ngày · người ghi · ảnh, hoặc "Chưa trả")
+- [ ] Ghi Lần 1 → form "💰 Trả thưởng lần 1 — <điểm bán>": ngày trả mặc định hôm nay, KHÔNG chọn được
+      ngày tương lai; nút chọn ảnh mở THƯ VIỆN (không bật camera), chọn nhiều ảnh → lưới xem trước, xoá
+      từng ảnh; KHÔNG hỏi quyền vị trí
+- [ ] "Lưu trả thưởng" khi chưa có ảnh → báo lỗi; bấm liên tục 2 lần → chỉ 1 bản ghi
+- [ ] Đang tải ảnh (mạng chậm) bấm × đóng form → mở lượt khác, "Ghi trả thưởng": form mới KHÔNG hiện
+      tiến độ / chữ "Đang lưu…" của form cũ; toast của form cũ kèm tên điểm bán
+- [ ] Bấm ảnh trả thưởng → xem to (lightbox); ảnh có tên file chứa dấu `"` vẫn hiện đúng, không chạy mã lạ
+- [ ] Lưu Lần 1 → backend có 1 `Display Reward Payout`: participation, payout_round = 1, payout_date,
+      display_point / promotion_program / distributor lấy từ lượt; ảnh = `Display Photo` (parentfield
+      `photos`, GPS trống) trỏ tới file đã upload
+- [ ] Ghi Lần 2 trước khi có Lần 1 → báo lỗi; ngày Lần 2 < ngày Lần 1 → báo lỗi; ngày tương lai → báo lỗi
+- [ ] "Sửa" Lần 1 → form điền sẵn; lưu → CÙNG bản ghi được cập nhật (không tạo mới), có Version ghi lịch sử
+- [ ] Xoá Lần 1 khi đã có Lần 2 → báo lỗi; xoá Lần 2 rồi Lần 1 → được; tiến độ cập nhật đúng
+- [ ] Modal chi tiết lượt (tab Chương trình) của lượt Đã duyệt có mục Trả thưởng; lượt chưa duyệt → không ghi được
+- [ ] Ảnh trả thưởng KHÔNG lẫn vào ảnh trưng bày (modal điểm bán / lượt, `/ql-km` theo dõi ảnh tháng)
+
+`/ql-km` → sub-tab 💰 Trả thưởng:
+- [ ] Như trên cho MỌI NPP, thêm cột / lọc NPP (lọc 1 NPP = `payout_progress({ customer })`)
+- [ ] Tài khoản Accounts Manager ghi / sửa / xoá được trả thưởng của NPP bất kỳ
+- [ ] Tài khoản không có role quản lý → "Chỉ quản lý kênh mới xem được dữ liệu này."
+
+Phạm vi & cập nhật:
+- [ ] NPP A gọi API với lượt của NPP B (kể cả truyền `customer` = NPP B) → PermissionError
+      "Không có quyền với lượt tham gia này.", không ghi gì
+- [ ] Site có app `salep` cũ (chưa có `salep.api.payout`) hoặc chưa `bench migrate` (chưa có bảng
+      `Display Reward Payout`) → tab Trả thưởng báo "Cần cập nhật app salep (bench migrate) để dùng chức
+      năng này."; các tab Khuyến mại khác vẫn tải bình thường
+
 ## Thống kê `/thong-ke`
 - [ ] Chart 1: Line chart doanh số 12 tháng render
 - [ ] Chart 2: Donut chart tỉ trọng item_group ("Hàng truyền thống" / "Hàng Tết")
@@ -188,4 +233,28 @@ frappe.call('npp.api.promo.delete_staff', { staff: '<NV còn điểm>' }).catch(
 
 fetch('/api/method/npp.api.promo.offboard_staff?staff=NV-00001').then(r => console.log(r.status))
 // Kỳ vọng: 403 (endpoint GHI chỉ nhận POST) — NV KHÔNG bị nghỉ việc / khoá
+
+// ── Trả thưởng (salep doc/09) ──
+frappe.call('npp.api.promo.payout_progress').then(r => console.log(r.message.totals, r.message.programs[0], r.message.rows[0]))
+// Kỳ vọng: totals { eligible, paid_1, paid_2 }; programs[i] có eligible, paid_1, paid_2, pct_1, pct_2;
+//   rows[i] có point_name, staff_name, round_1 / round_2 ({ name, payout_date, photos } | null),
+//   status 'none' | 'r1' | 'done'; chỉ lượt Đã duyệt của NPP mình
+
+frappe.call('npp.api.promo.participation_payouts', { name: '<lượt đã duyệt>' }).then(console.log)
+// Kỳ vọng: { participation, eligible: true, reward_per_point, rounds: [{ round: 1, paid, … }, { round: 2, paid, … }] }
+//   (luôn đủ 2 phần tử); lượt của NPP khác → PermissionError
+
+frappe.call('npp.api.promo.record_payout', { participation: '<lượt đã duyệt>', payout_round: 1,
+  payout_date: new Date().toISOString().slice(0, 10), photos: JSON.stringify(['/files/<ảnh đã upload>.jpg']), note: 'smoke' }).then(console.log)
+// Kỳ vọng: ghi được; gọi lại cùng payout_round = cập nhật (vẫn 1 bản ghi). photos = ['https://ngoai.example/x.jpg']
+//   hoặc [] → lỗi; payout_round: 2 khi chưa có Lần 1 → lỗi; lượt chưa duyệt → lỗi
+
+frappe.call('npp.api.promo.delete_payout', { participation: '<lượt có đủ 2 lần>', payout_round: 1 }).catch(console.log)
+// Kỳ vọng: lỗi (không xoá Lần 1 khi đã có Lần 2); payout_round: 2 → xoá được
+
+fetch('/api/method/npp.api.promo.delete_payout?participation=<lượt>&payout_round=2').then(r => console.log(r.status))
+// Kỳ vọng: 403 (endpoint GHI chỉ nhận POST) — không xoá gì
+
+frappe.call('npp.api.promo_admin.payout_progress', { customer: '<NPP>' }).then(r => console.log(r.message.totals, r.message.rows.length))
+// Kỳ vọng (quản lý kênh / kế toán): chỉ lượt của NPP đó; bỏ customer → mọi NPP (rows có distributor_name)
 ```

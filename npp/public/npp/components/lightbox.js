@@ -4,6 +4,9 @@
 
 import { escapeHtml } from '../lib/format.js';
 
+// escapeHtml không thoát dấu " → dùng attr() cho giá trị nằm trong thuộc tính HTML.
+function attr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
 let _installed = false;
 let _keyHandler = null;
 
@@ -16,10 +19,19 @@ export function openLightbox(url, caption = '') {
         mount.className = 'npp-lightbox';
         document.body.appendChild(mount);
     }
-    mount.innerHTML =
-        '<button class="npp-lightbox-close" type="button" aria-label="Đóng">✕</button>'
-        + `<img src="${escapeHtml(url)}" alt="${escapeHtml(caption)}">`
-        + (caption ? `<div class="npp-lightbox-cap">${escapeHtml(caption)}</div>` : '');
+    // Ảnh dựng bằng DOM (gán .src/.alt), KHÔNG nội suy vào innerHTML: escapeHtml không thoát dấu "
+    // → URL ảnh chứa " (tên file upload giữ nguyên dấu ") sẽ phá thuộc tính và chèn được onerror=….
+    mount.innerHTML = '<button class="npp-lightbox-close" type="button" aria-label="Đóng">✕</button>';
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = caption;
+    mount.appendChild(img);
+    if (caption) {
+        const cap = document.createElement('div');
+        cap.className = 'npp-lightbox-cap';
+        cap.textContent = caption;
+        mount.appendChild(cap);
+    }
     mount.classList.add('npp-show');
     // Bấm nền hoặc nút ✕ để đóng; bấm chính ảnh thì KHÔNG đóng (để xem kỹ).
     mount.onclick = (e) => {
@@ -43,7 +55,7 @@ export function galleryHtml(groups) {
     return g.map((grp) => `<div class="npp-mt-2">
         <div class="npp-text-sm npp-font-bold">${escapeHtml(grp.label)} (${grp.images.length})</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:6px;">
-            ${grp.images.map((im) => `<img class="npp-zoomable" src="${escapeHtml(im.url)}" alt="${escapeHtml(grp.label)}" loading="lazy" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);cursor:zoom-in;">`).join('')}
+            ${grp.images.map((im) => `<img class="npp-zoomable" src="${attr(im.url)}" alt="${attr(grp.label)}" loading="lazy" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid var(--npp-border);background:var(--npp-surface-2);cursor:zoom-in;">`).join('')}
         </div></div>`).join('');
 }
 

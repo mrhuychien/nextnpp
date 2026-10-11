@@ -5,6 +5,8 @@ Dữ liệu app `salep` (cùng site). KHÔNG scope theo 1 NPP (quản lý xem t�
 Gate: System Manager / Channel Manager / Sales Manager / Accounts Manager.
 Phê duyệt tham gia (Display Participation) chỉ đổi workflow_state + approved_by/on
 (không có side-effect tạo điểm thưởng — theo workflow blueprint của salep).
+Trả thưởng điểm bán 2 lần (salep doc/09): gọi hàm lõi `salep.api.payout` qua `_payout()`
+(quản lý kênh — kể cả kế toán Accounts Manager — ghi/xoá được cho mọi NPP).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ REJECTED = "Từ chối"
 # chuỗi khác với "Chờ duyệt" (vd điểm bán tạo qua portal /dp ở trạng thái nháp).
 DECIDED = {APPROVED, REJECTED}
 ADMIN_ROLES = {"System Manager", "Channel Manager", "Sales Manager", "Accounts Manager"}
+PAYOUT_DOCTYPE = "Display Reward Payout"  # trả thưởng 2 lần (salep doc/09, có sau bench migrate)
 
 
 def _is_pending(state) -> bool:
@@ -41,6 +44,28 @@ def _require_salep() -> None:
             and frappe.db.table_exists("Display Participation")
             and frappe.db.table_exists("Display Point")):
         frappe.throw(_("Site chưa cài module Khuyến mại (salep)."))
+
+
+def _payout():
+    """Module lõi `salep.api.payout` (trả thưởng 2 lần — luật R1–R7 + ghi nằm MỘT chỗ ở app salep).
+    Nạp lười: salep cũ chưa có module, hoặc đã có code nhưng chưa bench migrate (chưa có bảng
+    Display Reward Payout) → báo cần cập nhật."""
+    try:
+        from salep.api import payout
+    except ImportError:
+        payout = None
+    if payout is None or not frappe.db.table_exists(PAYOUT_DOCTYPE):
+        frappe.throw(_("Cần cập nhật app salep (bench migrate) để dùng chức năng này."))
+    return payout
+
+
+def _participation_name(name) -> str:
+    """Tên lượt tham gia đã kiểm tồn tại. Chỉ nhận chuỗi: dict/list (JSON body) lọt vào db.exists /
+    get_value sẽ thành bộ lọc."""
+    name = name.strip() if isinstance(name, str) else ""
+    if not name or not frappe.db.exists("Display Participation", name):
+        frappe.throw(_("Không tìm thấy lượt tham gia"))
+    return name
 
 
 def _cust_names(names) -> dict:
@@ -592,3 +617,47 @@ def rejected_participations(program: str | None = None) -> list[dict]:
         r["staff"] = sn.get(r.get("owner")) or r.get("owner")
         r["modified"] = str(r["modified"]) if r.get("modified") else None
     return rows
+
+
+# ─── Trả thưởng điểm bán (2 lần) — salep doc/09 ───────────────────────────────
+# Quản lý kênh thấy/ghi mọi NPP: _guard() rồi gọi hàm lõi salep.api.payout (luật R1–R7, kiểm trước/
+# ghi sau, rollback + log ở đó). Endpoint GHI chỉ nhận POST.
+@frappe.whitelist()
+def payout_progress(program: str | None = None, customer: str | None = None) -> dict:
+    """Tiến độ trả thưởng (Lần 1 / Lần 2) các lượt ĐÃ DUYỆT — mọi NPP, hoặc 1 NPP nếu truyền `customer`;
+    lọc 1 chương trình nếu có. Trả {totals, programs[], rows[]} (shape doc/09 §3.3)."""
+    _guard()
+    _require_salep()
+    customer = customer.strip() if isinstance(customer, str) else ""
+    return _payout().progress(distributor=customer or None, program=program or None)
+
+
+@frappe.whitelist()
+def participation_payouts(name: str) -> dict:
+    """2 lần trả thưởng của 1 lượt: {participation, eligible, reward_per_point, rounds[2]}."""
+    _guard()
+    _require_salep()
+    name = _participation_name(name)
+    return _payout().participation_payouts(participation=name)
+
+
+@frappe.whitelist(methods=["POST"])
+def record_payout(participation: str, payout_round, payout_date: str, photos,
+                  note: str | None = None) -> dict:
+    """Ghi (hoặc cập nhật nếu đã có) trả thưởng lần `payout_round` (1|2) cho 1 lượt ĐÃ DUYỆT: ngày trả
+    (≤ hôm nay), ≥1 ảnh đã upload lên site (`photos` = list hoặc chuỗi JSON), ghi chú. Lần 2 cần đã có
+    Lần 1. Kế toán (Accounts Manager) ghi được."""
+    _guard()
+    _require_salep()
+    participation = _participation_name(participation)
+    return _payout().record_payout(participation=participation, payout_round=payout_round,
+                                   payout_date=payout_date, photos=photos, note=note)
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_payout(participation: str, payout_round) -> dict:
+    """Xoá trả thưởng lần `payout_round` của 1 lượt (không xoá Lần 1 khi đã có Lần 2)."""
+    _guard()
+    _require_salep()
+    participation = _participation_name(participation)
+    return _payout().delete_payout(participation=participation, payout_round=payout_round)

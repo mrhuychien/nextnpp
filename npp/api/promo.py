@@ -11,6 +11,9 @@ nên an toàn và không phụ thuộc việc NPP có role trên doctype của s
 NV phụ trách điểm bán = `Display Point.owner`; NV phụ trách lượt = `Display Participation.owner`
 (salep doc/08). Phần ĐỌC tính tại chỗ (cùng định nghĩa owner_kind với salep); phần GHI
 (gán/chuyển điểm, nghỉ việc) + lịch sử NV gọi hàm lõi `salep.api.npp_manage` qua `_npp_manage()`.
+
+Trả thưởng điểm bán 2 lần (salep doc/09): kiểm lượt thuộc NPP rồi gọi hàm lõi `salep.api.payout`
+qua `_payout()` (luật + ghi nằm MỘT chỗ ở app salep).
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ STAFF_LEFT = "Nghỉ việc"
 PROGRAM_ENDED = "Kết thúc"
 NPP_HOLD_LABEL = "NPP (chưa giao)"
 TRANSFER_DOCTYPE = "Display Point Transfer"  # nhật ký bàn giao điểm (salep, có sau bench migrate)
+PAYOUT_DOCTYPE = "Display Reward Payout"  # trả thưởng 2 lần (salep doc/09, có sau bench migrate)
 INTERNAL_ROLES = {"System Manager", "Channel Manager"}  # tài khoản nội bộ — NPP không được khoá
 PARTS_LIMIT = 2000  # npp_participations: lượt mới nhất (khớp salep participations; UI báo khi chạm trần)
 # owner rỗng/không xác định → coi như "other" (không thuộc NV nào của NPP)
@@ -52,6 +56,30 @@ def _npp_manage():
     except ImportError:
         frappe.throw(_("Cần cập nhật app salep (bench migrate) để dùng chức năng này."))
     return npp_manage
+
+
+def _payout():
+    """Module lõi `salep.api.payout` (trả thưởng 2 lần — luật R1–R7 + ghi nằm MỘT chỗ ở app salep).
+    Nạp lười: salep cũ chưa có module, hoặc đã có code nhưng chưa bench migrate (chưa có bảng
+    Display Reward Payout) → báo cần cập nhật."""
+    try:
+        from salep.api import payout
+    except ImportError:
+        payout = None
+    if payout is None or not frappe.db.table_exists(PAYOUT_DOCTYPE):
+        frappe.throw(_("Cần cập nhật app salep (bench migrate) để dùng chức năng này."))
+    return payout
+
+
+def _own_participation(participation, customer) -> str:
+    """Trả tên lượt nếu lượt thuộc NPP (distributor == customer), else PermissionError. Kiểm TRƯỚC khi
+    gọi hàm lõi trả thưởng (hàm lõi không tự kiểm phạm vi). Chỉ nhận chuỗi: dict/list (JSON body) lọt vào
+    get_value sẽ thành bộ lọc → vượt kiểm. Lượt không tồn tại báo như không có quyền."""
+    name = participation.strip() if isinstance(participation, str) else ""
+    dist = frappe.db.get_value("Display Participation", name, "distributor") if name else None
+    if not dist or dist != customer:
+        frappe.throw(_("Không có quyền với lượt tham gia này."), frappe.PermissionError)
+    return name
 
 
 def _staff_has(fieldname: str) -> bool:
@@ -735,3 +763,49 @@ def offboard_staff(staff: str, target: str | None = None, note: str | None = Non
     _require_salep()
     core = _npp_manage()
     return core.offboard_staff(distributor=customer, staff=staff, target=target or core.TARGET_NPP, note=note)
+
+
+# Trả thưởng điểm bán 2 lần (salep doc/09): xác định NPP (require_customer) + kiểm lượt thuộc NPP
+# (`_own_participation`, TRƯỚC khi gọi lõi — hàm lõi không tự kiểm phạm vi) rồi gọi `salep.api.payout`
+# (luật R1–R7, kiểm trước/ghi sau, rollback + log ở đó). Endpoint GHI chỉ nhận POST.
+
+@frappe.whitelist()
+def payout_progress(program: str | None = None, customer: str | None = None) -> dict:
+    """Tiến độ trả thưởng (Lần 1 / Lần 2) các lượt ĐÃ DUYỆT của NPP, lọc 1 chương trình nếu có.
+    Trả {totals{eligible, paid_1, paid_2}, programs[], rows[]} (shape doc/09 §3.3)."""
+    customer = require_customer(customer)
+    _require_salep()
+    return _payout().progress(distributor=customer, program=program or None)
+
+
+@frappe.whitelist()
+def participation_payouts(name: str, customer: str | None = None) -> dict:
+    """2 lần trả thưởng của 1 lượt thuộc NPP: {participation, eligible, reward_per_point, rounds[2]}.
+    Lượt của NPP khác → PermissionError."""
+    customer = require_customer(customer)
+    _require_salep()
+    name = _own_participation(name, customer)
+    return _payout().participation_payouts(participation=name)
+
+
+@frappe.whitelist(methods=["POST"])
+def record_payout(participation: str, payout_round, payout_date: str, photos,
+                  note: str | None = None, customer: str | None = None) -> dict:
+    """Ghi (hoặc cập nhật nếu đã có) trả thưởng lần `payout_round` (1|2) cho 1 lượt ĐÃ DUYỆT của NPP:
+    ngày trả (≤ hôm nay), ≥1 ảnh đã upload lên site (`photos` = list hoặc chuỗi JSON), ghi chú.
+    Lần 2 cần đã có Lần 1. Lượt của NPP khác → PermissionError, không ghi gì."""
+    customer = require_customer(customer)
+    _require_salep()
+    participation = _own_participation(participation, customer)
+    return _payout().record_payout(participation=participation, payout_round=payout_round,
+                                   payout_date=payout_date, photos=photos, note=note)
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_payout(participation: str, payout_round, customer: str | None = None) -> dict:
+    """Xoá trả thưởng lần `payout_round` của 1 lượt thuộc NPP (không xoá Lần 1 khi đã có Lần 2).
+    Lượt của NPP khác → PermissionError, không xoá gì."""
+    customer = require_customer(customer)
+    _require_salep()
+    participation = _own_participation(participation, customer)
+    return _payout().delete_payout(participation=participation, payout_round=payout_round)
