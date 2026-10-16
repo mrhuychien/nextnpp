@@ -11,8 +11,9 @@ import { renderQR } from '../components/qr.js';
 import { galleryHtml } from '../components/lightbox.js';   // bấm ảnh → xem to (delegated) + lưới nhiều ảnh
 import {
     payoutSectionHtml, bindPayoutSection, payoutKpiHtml, progressTableHtml, payoutListTable,
-    payStatusOptions, payOwnerOptions, payOwnerValid, filterPayRows,
+    payStatusOptions, payOwnerOptions, payOwnerValid, filterPayRows, PAY_STATUS,
 } from '../components/payout.js';   // trả thưởng 2 lần (salep doc/09)
+import { downloadXlsx, fileStamp } from '../components/xlsx.js';   // xuất Excel (salep doc/10)
 
 // Khuyến mại — NPP quản lý & theo dõi chương trình trưng bày TRÊN ĐỊA BÀN của mình.
 // Dữ liệu từ app `salep` (cùng site), scope server-side theo require_customer.
@@ -20,6 +21,8 @@ import {
 // gọi npp.api.promo.* → hàm lõi salep.api.npp_manage (salep doc/08).
 // Trả thưởng điểm bán 2 lần (tab 💰 Trả thưởng + mục trong chi tiết lượt đã duyệt) gọi
 // npp.api.promo.payout_progress / participation_payouts / record_payout / delete_payout → salep.api.payout (doc/09).
+// Xuất Excel (salep doc/10): nút "⬇️ Xuất Excel" ở Nhân viên / Điểm bán / Chương trình / Trả thưởng + lịch sử NV
+// → components/xlsx.js dựng .xlsx NGAY trên trình duyệt từ dữ liệu đã tải, theo đúng bộ lọc hiện tại.
 
 const STATUS_BADGE = { 'Nháp': 'muted', 'Đang chạy': 'success', 'Kết thúc': 'primary' };
 const WF_BADGE = { 'Nháp': 'muted', 'Chờ duyệt': 'warning', 'Đã duyệt': 'success', 'Từ chối': 'danger' };
@@ -46,6 +49,9 @@ let _ovSeq = 0;                   // chống response cũ ghi đè (npp_overview
 let _parts = [];                  // lượt tham gia của chương trình đang chọn
 let _partsProg = '';
 let _partsSeq = 0;
+let _partsReady = false;          // _parts đã khớp _partsProg (false khi đang tải) — chặn xuất Excel dữ liệu cũ
+let _programs = [];               // npp_overview.programs (sheet "Chương trình" + thưởng/điểm khi xuất)
+let _customer = '';               // npp_overview.customer (dự phòng nhãn phạm vi tên file Excel)
 let _partsMapDirty = false;       // map tham gia cần vẽ lại khi tab Chương trình hiện
 let _ptRows = [];                 // điểm bán sau lọc (toàn bộ, không chỉ trang đang xem)
 let _paRows = [];                 // lượt tham gia sau lọc
@@ -136,9 +142,11 @@ function modalAlive(seq) {
 }
 
 function isSelf(s) { return !!(s && (s.is_self || (s.user && s.user === window.NPP_CONTEXT?.user))); }
+// Nhãn trạng thái NV — 1 nguồn cho badge trên màn hình và cột "Trạng thái" khi xuất Excel
+function staffStatus(s) { return s.resigned ? 'Đã nghỉ' : (s.active ? 'Hoạt động' : 'Tạm dừng'); }
 function staffBadge(s) {
-    if (s.resigned) return '<span class="npp-badge npp-badge-danger">Đã nghỉ</span>';
-    return s.active ? '<span class="npp-badge npp-badge-success">Hoạt động</span>' : '<span class="npp-badge npp-badge-muted">Tạm dừng</span>';
+    const tone = s.resigned ? 'danger' : (s.active ? 'success' : 'muted');
+    return `<span class="npp-badge npp-badge-${tone}">${staffStatus(s)}</span>`;
 }
 function ownerCell(r) {
     if (r.owner_kind === 'npp') return '<span class="npp-badge npp-badge-muted">NPP giữ</span>';
@@ -188,7 +196,7 @@ export async function render({ container, query }) {
     resetFilters();
     _partsProg = '';
     _payProg = ''; _pay = null; _payFor = null; _payPrograms = [];
-    _parts = []; _ptRows = []; _paRows = [];
+    _parts = []; _ptRows = []; _paRows = []; _partsReady = false; _programs = []; _customer = '';
     _selPts.clear(); _selParts.clear();
     _hist = null; _bulkBusy = false;
     container.innerHTML = html`
@@ -237,6 +245,8 @@ function renderBody(d) {
     const selfStaff = !!d.self_is_staff;
     _staff = staff;
     _points = points;
+    _programs = programs;
+    _customer = d.customer || '';
     if (!ownerValid(_pf.owner)) _pf.owner = '';
     if (!ownerValid(_cf.owner)) _cf.owner = '';
     if (_partsProg && !programs.some((p) => p.program === _partsProg)) _partsProg = '';
@@ -256,9 +266,12 @@ function renderBody(d) {
         <!-- TAB Nhân viên -->
         <div id="npp-km-nv" class="npp-km-tab"${hid('nv')}>
             <div class="npp-card">
-                <div class="npp-flex npp-justify-between npp-items-center">
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
                     <h3 class="npp-font-bold">Nhân viên & tiến độ</h3>
-                    <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;">➕ Thêm nhân viên</button>
+                    <div class="npp-flex npp-flex-wrap" style="gap:6px;">
+                        ${staff.length ? xlBtn('npp-km-stxl', 'danh sách nhân viên') : ''}
+                        <button id="npp-km-addstaff" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;">➕ Thêm nhân viên</button>
+                    </div>
                 </div>
                 ${selfStaff
                     ? html`<div class="npp-note-block npp-note-npp npp-mt-2" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -292,9 +305,12 @@ function renderBody(d) {
                 <div class="npp-map-legend"><span><i style="background:#10b981;"></i>Hoạt động</span><span><i style="background:#94a3b8;"></i>Ngừng</span></div>
             </div>
             <div class="npp-card npp-mt-2" id="npp-km-ptcard">
-                <div class="npp-flex npp-justify-between npp-items-center">
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
                     <h3 class="npp-font-bold">Danh sách điểm bán (${points.length})</h3>
-                    <button id="npp-km-addpoint" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;">➕ Thêm điểm bán</button>
+                    <div class="npp-flex npp-flex-wrap" style="gap:6px;">
+                        ${points.length ? xlBtn('npp-km-ptxl', 'danh sách điểm bán') : ''}
+                        <button id="npp-km-addpoint" type="button" class="npp-btn-primary" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;">➕ Thêm điểm bán</button>
+                    </div>
                 </div>
                 ${points.length ? html`
                     <div class="npp-ql-filters npp-km-filters npp-mt-3">
@@ -337,7 +353,10 @@ function renderBody(d) {
                 </div>` : `<div class="npp-mt-2">${emptyState({ icon: '📭', title: 'Chưa có chương trình' })}</div>`}
             </div>
             <div class="npp-card npp-mt-3">
-                <h3 class="npp-font-bold">Điểm bán tham gia chương trình</h3>
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+                    <h3 class="npp-font-bold">Điểm bán tham gia chương trình</h3>
+                    ${xlBtn('npp-km-paxl', 'danh sách tham gia trưng bày')}
+                </div>
                 <div class="npp-ql-filters npp-km-filters npp-mt-3">
                     <select id="npp-km-progsel" aria-label="Lọc theo chương trình">
                         <option value="">Tất cả chương trình</option>
@@ -365,7 +384,10 @@ function renderBody(d) {
                 <div id="npp-km-ttprogress" class="npp-mt-3"><div class="npp-skeleton" style="height:160px;"></div></div>
             </div>
             <div class="npp-card npp-mt-3" id="npp-km-ttcard">
-                <h3 class="npp-font-bold">Điểm bán đủ điều kiện (lượt đã duyệt)</h3>
+                <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap" style="gap:6px;">
+                    <h3 class="npp-font-bold">Điểm bán đủ điều kiện (lượt đã duyệt)</h3>
+                    ${xlBtn('npp-km-ttxl', 'danh sách trả thưởng')}
+                </div>
                 <div class="npp-ql-filters npp-km-filters npp-mt-3">
                     <select id="npp-km-ttst" aria-label="Lọc theo trạng thái trả thưởng">${payStatusOptions([], _payf.status)}</select>
                     <select id="npp-km-ttowner" aria-label="Lọc theo nhân viên phụ trách">${payOwnerOptions([], _payf.owner)}</select>
@@ -396,6 +418,8 @@ function renderBody(d) {
     document.getElementById('npp-km-addstaff')?.addEventListener('click', () => openCreateStaff());
     document.getElementById('npp-km-selfstaff')?.addEventListener('click', addSelfAsStaff);
     document.getElementById('npp-km-addpoint')?.addEventListener('click', () => { window.location.href = '/dp#/points/new'; });
+    [['npp-km-stxl', exportStaff], ['npp-km-ptxl', exportPoints], ['npp-km-paxl', exportParts], ['npp-km-ttxl', exportPayouts]]
+        .forEach(([id, fn]) => document.getElementById(id)?.addEventListener('click', (e) => fn(e.currentTarget)));
     bindStaffFilters();
     bindPointFilters();
     bindPartFilters();
@@ -552,6 +576,239 @@ async function bulkSetActive(points, active, btn) {
         errToast(err);
         updateBulkBar();   // khôi phục nút
     }
+}
+
+// ─── Xuất Excel (salep doc/10) ─────────────────────────────────────────
+// File .xlsx dựng trên trình duyệt từ dữ liệu ĐÃ TẢI, theo đúng bộ lọc / tìm kiếm hiện tại: lấy từ
+// filtered*() / filterPayRows() trên TOÀN BỘ dòng (mọi trang của paged(), không chỉ trang đang xem).
+// Server đã scope theo NPP (require_customer) → file không chứa gì ngoài phạm vi người dùng được xem.
+// Key mới phía server (tax_code, bank_*, creation, point_bank_*, reward_per_point) thiếu → ô trống.
+function xlScope() {
+    const c = window.NPP_CONTEXT || {};
+    return c.customerName || c.customer || _customer || '';
+}
+function xlBtn(id, what) {
+    return `<button id="${id}" type="button" class="npp-cn-btn" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;" aria-label="Xuất Excel ${attr(what)}">⬇️ Xuất Excel</button>`;
+}
+// Nút xuất khoá TỐI THIỂU chừng này ms: file nhỏ dựng xong trong ~20–150ms, ngắn hơn khoảng cách 2 lần bấm
+// của 1 double-click / chạm 2 lần thật (50–500ms) → chỉ khoá "khi đang dựng" vẫn ra 2 file.
+const XL_LOCK_MS = 800;
+/**
+ * Bấm "⬇️ Xuất Excel": chống bấm 2 lần (disable khi đang dựng + tối thiểu XL_LOCK_MS) → build() trả
+ * [sheet chính, ...sheet phụ] (null = build đã tự báo, không xuất). Sheet chính 0 dòng → cảnh báo, không tải.
+ * Toast "Đã xuất N dòng" với N = số dòng sheet chính (countAll → tổng mọi sheet, cho lịch sử NV 3 sheet
+ * ngang hàng); note() trả chuỗi (vd. danh sách đã chạm trần server) → nối vào toast dạng cảnh báo.
+ */
+async function runExport(btn, base, build, { countAll = false, note = null } = {}) {
+    if (!btn || btn.disabled) return;
+    const label = btn.textContent;
+    const t0 = Date.now();
+    btn.disabled = true;
+    btn.textContent = '⏳ Đang xuất…';
+    try {
+        const sheets = build();
+        if (!sheets) return;
+        const n = countAll ? sheets.reduce((k, sh) => k + sh.rows.length, 0) : sheets[0].rows.length;
+        if (!n) { showToast('Không có dòng nào để xuất', 'warning'); return; }
+        await downloadXlsx(fileStamp(xlScope(), base), sheets);
+        const extra = note ? note() : '';
+        if (extra) showToast(`Đã xuất ${formatNumber(n)} dòng — ${extra}`, 'warning', 6000);
+        else showToast(`Đã xuất ${formatNumber(n)} dòng`, 'success');
+    } catch (err) {
+        console.error('[npp] xuất Excel', err);
+        showToast('Lỗi xuất Excel: ' + ((err && err.message) || err), 'error', 5000);
+    } finally {
+        btn.textContent = label;
+        setTimeout(() => { btn.disabled = false; }, Math.max(0, XL_LOCK_MS - (Date.now() - t0)));
+    }
+}
+function xc(header, value, type = 'text') { return { header, value, type }; }
+const XC_STT = xc('STT', (r, i) => i + 1, 'int');
+// Phụ trách = staff_name server dựng (doc/10 §2): "NPP (chưa giao)" / tên NV (+ "(đã nghỉ)") / tài khoản khác
+// — cùng nhãn file Excel của /dp và /ql-km (badge "NPP giữ" chỉ là cách hiển thị gọn trên màn hình).
+const NPP_HOLD_LABEL = 'NPP (chưa giao)';   // khớp promo.NPP_HOLD_LABEL
+function ownerLabel(r) {
+    if (r.owner_kind === 'npp') return r.staff_name || NPP_HOLD_LABEL;
+    if (!r.staff_name) return '';
+    return r.staff_name + (r.owner_kind === 'staff' && r.staff_left ? ' (đã nghỉ)' : '');
+}
+const pointStatus = (p) => (p.is_active ? 'Hoạt động' : 'Ngừng');
+const pctOf = (n, total) => (total ? (Number(n) || 0) / total * 100 : '');
+const coord = (v) => (Number(v) ? v : '');   // Float chưa nhập = 0 → "chưa có toạ độ" (như bản đồ) → ô trống
+
+function staffColumns() {
+    return [
+        XC_STT,
+        xc('Mã NV', (s) => s.name),
+        xc('Họ tên', (s) => s.full_name),
+        xc('SĐT (đăng nhập)', (s) => s.phone),
+        xc('CCCD', (s) => s.cccd),
+        xc('Trạng thái', staffStatus),
+        xc('Ngày nghỉ', (s) => (s.resigned ? s.left_on : ''), 'date'),
+        xc('Số điểm phụ trách', (s) => s.points || 0, 'int'),
+        xc('Lượt tham gia', (s) => s.total || 0, 'int'),
+        xc('Đã duyệt', (s) => s.approved || 0, 'int'),
+        xc('Tỷ lệ duyệt %', (s) => pctOf(s.approved, s.total), 'percent'),   // chưa có lượt → ô trống (không phải 0%)
+    ];
+}
+function pointColumns() {
+    return [
+        XC_STT,
+        xc('Mã điểm', (p) => p.name),
+        xc('Tên điểm bán', (p) => p.point_name),
+        xc('SĐT', (p) => p.phone),
+        xc('Địa chỉ', (p) => p.address_line),
+        xc('Mã số thuế', (p) => p.tax_code),
+        xc('NV phụ trách', ownerLabel),
+        xc('Trạng thái', pointStatus),
+        xc('Số lượt tham gia', (p) => p.participations || 0, 'int'),
+        xc('Lượt đã duyệt', (p) => p.approved || 0, 'int'),
+        xc('Chủ TK nhận thưởng', (p) => p.bank_account_name),
+        xc('Số TK', (p) => p.bank_account_no),
+        xc('Ngân hàng', (p) => p.bank_name),
+        xc('Vĩ độ', (p) => coord(p.latitude), 'number'),
+        xc('Kinh độ', (p) => coord(p.longitude), 'number'),
+        xc('Ngày tạo', (p) => p.creation, 'date'),
+    ];
+}
+function partColumns() {
+    return [
+        XC_STT,
+        xc('Mã lượt', (r) => r.name),
+        xc('Mã điểm', (r) => r.display_point),
+        xc('Điểm bán', (r) => r.point_name || r.display_point),
+        xc('SĐT điểm', (r) => r.point_phone),
+        xc('Chương trình', (r) => r.program_name || r.promotion_program),
+        xc('NV phụ trách', ownerLabel),
+        xc('Trạng thái duyệt', (r) => r.workflow_state),
+        xc('Lý do từ chối', (r) => (r.workflow_state === 'Từ chối' ? r.reject_reason : '')),   // như màn hình: chỉ lượt Từ chối
+        xc('Cập nhật', (r) => r.modified, 'datetime'),
+        xc('Vĩ độ', (r) => coord(r.latitude), 'number'),
+        xc('Kinh độ', (r) => coord(r.longitude), 'number'),
+    ];
+}
+function programColumns() {
+    return [
+        xc('Chương trình', (p) => p.program_name || p.program),
+        xc('Trạng thái', (p) => p.status),
+        xc('Bắt đầu', (p) => p.start_date, 'date'),
+        xc('Kết thúc', (p) => p.end_date, 'date'),
+        xc('Thưởng/điểm', (p) => p.reward_per_point || '', 'int'),   // 0 = chưa đặt mức → trống (như màn hình)
+        xc('Lượt tham gia', (p) => p.participations || 0, 'int'),
+        xc('Đã duyệt', (p) => p.approved || 0, 'int'),
+        xc('Điểm đã duyệt', (p) => p.approved_points || 0, 'int'),
+        xc('Độ phủ %', (p) => p.coverage_pct || 0, 'percent'),
+    ];
+}
+function payColumns(rewardOf) {
+    const rd = (x, k) => (x ? (k === 'photos' ? x.photos || 0 : x.payout_date) : '');   // lần chưa trả → trống
+    return [
+        XC_STT,
+        xc('Chương trình', (r) => r.program_name || r.promotion_program),
+        xc('Mã lượt', (r) => r.participation),
+        xc('Mã điểm', (r) => r.display_point),
+        xc('Điểm bán', (r) => r.point_name || r.display_point),
+        xc('SĐT', (r) => r.point_phone),
+        xc('NV phụ trách', (r) => r.staff_name || r.owner),
+        xc('Lần 1 – ngày', (r) => rd(r.round_1, 'date'), 'date'),
+        xc('Lần 1 – số ảnh', (r) => rd(r.round_1, 'photos'), 'int'),
+        xc('Lần 2 – ngày', (r) => rd(r.round_2, 'date'), 'date'),
+        xc('Lần 2 – số ảnh', (r) => rd(r.round_2, 'photos'), 'int'),
+        xc('Trạng thái', (r) => PAY_STATUS[r.status] || r.status),
+        xc('Thưởng/điểm', rewardOf, 'int'),
+        xc('Chủ TK nhận thưởng', (r) => r.point_bank_account_name),
+        xc('Số TK', (r) => r.point_bank_account_no),
+        xc('Ngân hàng', (r) => r.point_bank_name),
+    ];
+}
+function paySummaryColumns() {
+    return [
+        xc('Chương trình', (p) => p.program_name || p.program),
+        xc('Trạng thái CT', (p) => p.status),
+        xc('Đủ điều kiện', (p) => p.eligible || 0, 'int'),
+        xc('Đã trả lần 1', (p) => p.paid_1 || 0, 'int'),
+        xc('% lần 1', (p) => pctOf(p.paid_1, p.eligible), 'percent'),
+        xc('Đã trả lần 2', (p) => p.paid_2 || 0, 'int'),
+        xc('% lần 2', (p) => pctOf(p.paid_2, p.eligible), 'percent'),
+    ];
+}
+function transferColumns() {
+    return [
+        XC_STT,
+        xc('Thời gian', (r) => r.creation, 'datetime'),
+        xc('Mã điểm', (r) => r.display_point),
+        xc('Điểm bán', (r) => r.point_name || r.display_point),
+        xc('Nhận / Giao', (r) => (r.direction === 'in' ? 'Nhận' : 'Giao')),
+        xc('Từ / Cho', (r) => r.counterpart_label),
+        xc('Số lượt chuyển', (r) => r.participations_moved || 0, 'int'),
+        xc('Lý do', (r) => r.reason),
+        xc('Ghi chú', (r) => r.note),
+        xc('Người thực hiện', (r) => r.by_label),
+    ];
+}
+
+function exportStaff(btn) {
+    runExport(btn, 'NhanVien', () => [{ name: 'Nhân viên', columns: staffColumns(), rows: filteredStaff() }]);
+}
+function exportPoints(btn) {
+    runExport(btn, 'DiemBan', () => [{ name: 'Điểm bán', columns: pointColumns(), rows: filteredPoints() }]);
+}
+// Tab Chương trình: lượt tham gia theo bộ lọc (chương trình + phụ trách + trạng thái + tìm) + sheet
+// "Chương trình" (npp_overview.programs; đang lọc 1 chương trình → chỉ chương trình đó).
+function exportParts(btn) {
+    runExport(btn, 'ThamGiaTrungBay', () => {
+        if (!_partsReady) { showToast('Danh sách tham gia đang tải — thử lại sau giây lát', 'warning'); return null; }
+        const progs = _partsProg ? _programs.filter((p) => p.program === _partsProg) : _programs;
+        return [
+            { name: 'Tham gia trưng bày', columns: partColumns(), rows: filteredParts() },
+            { name: 'Chương trình', columns: programColumns(), rows: progs },
+        ];
+    }, {
+        note: () => (_parts.length >= PARTS_LIMIT
+            ? `chỉ gồm ${formatNumber(PARTS_LIMIT)} lượt cập nhật gần nhất${_partsProg ? '' : ', chọn 1 chương trình để xuất đủ'}` : ''),
+    });
+}
+// Tab Trả thưởng: "Chi tiết" = lượt theo bộ lọc (chương trình + trạng thái trả + phụ trách + tìm);
+// "Tổng hợp" = payout_progress.programs (đang lọc 1 chương trình → chỉ chương trình đó).
+function exportPayouts(btn) {
+    runExport(btn, 'TraThuong', () => {
+        if (!_pay || !_payLoaded || _payFor !== _payProg) {
+            showToast('Dữ liệu trả thưởng chưa tải xong', 'warning');
+            return null;
+        }
+        const programs = _pay.programs || [];
+        // Thưởng/điểm: key reward_per_point của dòng (server mới) → không có thì lấy theo chương trình
+        const reward = new Map();
+        [..._programs, ..._payPrograms, ...programs].forEach((p) => { if (p.reward_per_point) reward.set(p.program, p.reward_per_point); });
+        const rewardOf = (r) => r.reward_per_point || reward.get(r.promotion_program) || '';
+        return [
+            { name: 'Chi tiết', columns: payColumns(rewardOf), rows: filterPayRows(_pay.rows || [], _payf) },
+            { name: 'Tổng hợp', columns: paySummaryColumns(), rows: _payProg ? programs.filter((p) => p.program === _payProg) : programs },
+        ];
+    }, {
+        note: () => (((_pay && _pay.rows) || []).length >= PAY_ROWS_LIMIT
+            ? `chi tiết chỉ gồm ${formatNumber(PAY_ROWS_LIMIT)} lượt đầu${_payProg ? '' : ', chọn 1 chương trình để xuất đủ'}` : ''),
+    });
+}
+// Modal lịch sử 1 NV (staff_history): 3 sheet Điểm bán · Tham gia · Bàn giao. Cột thiếu trong staff_history
+// (MST, TK nhận thưởng, ngày tạo, SĐT điểm, lý do từ chối, toạ độ lượt) bù từ _points / _parts đã tải.
+function exportHistory(h, btn) {
+    runExport(btn, 'LichSuNhanVien', () => {
+        const d = h.data || {};
+        const info = d.staff || {};
+        const byPt = new Map(_points.map((p) => [p.name, p]));
+        const byPart = new Map(_parts.map((r) => [r.name, r]));
+        const me = { owner_kind: 'staff', staff_name: info.full_name || (_staff.find((s) => s.name === h.staff) || {}).full_name || '', staff_left: !!info.resigned };
+        const pts = (d.points || []).map((p) => ({ ...me, ...(byPt.get(p.name) || {}), ...p }));
+        const pas = (d.participations || []).map((r) => ({
+            ...me, point_phone: (byPt.get(r.display_point) || {}).phone, ...(byPart.get(r.name) || {}), ...r,
+        }));
+        return [
+            { name: 'Điểm bán', columns: pointColumns(), rows: pts },
+            { name: 'Tham gia', columns: partColumns(), rows: pas },
+            { name: 'Bàn giao', columns: transferColumns(), rows: d.transfers || [] },
+        ];
+    }, { countAll: true });
 }
 
 // ─── TAB Nhân viên ─────────────────────────────────────────────────────
@@ -740,12 +997,14 @@ async function loadParticipations(program) {
     const root = document.getElementById('npp-km-parts');
     if (!root) return;
     _partsProg = program || '';
+    _partsReady = false;
     const seq = ++_partsSeq;
     root.innerHTML = '<div class="npp-skeleton" style="height:160px;"></div>';
     try {
         const rows = await api.call('npp.api.promo.npp_participations', { program: program || undefined });
         if (seq !== _partsSeq || !document.getElementById('npp-km-parts')) return;
         _parts = rows || [];
+        _partsReady = true;
         if (!ownerValid(_cf.owner)) _cf.owner = '';
         const ownerSel = document.getElementById('npp-km-paowner');
         if (ownerSel) ownerSel.innerHTML = ownerOptions(_parts, _cf.owner);
@@ -764,6 +1023,7 @@ async function loadParticipations(program) {
     } catch (err) {
         if (seq !== _partsSeq) return;
         _parts = [];
+        _partsReady = true;   // lỗi → danh sách rỗng (xuất báo "Không có dòng nào"), không treo "đang tải"
         root.innerHTML = `<div class="npp-text-muted">${escapeHtml(errText(err) || 'Lỗi')}</div>`;
         renderPartList();
     }
@@ -1335,7 +1595,10 @@ function staffModal(name, back) {
                 ${canOff ? '<button id="sm-off" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:9px;color:var(--npp-danger);">🚪 Nghỉ việc</button>' : ''}
                 <button id="sm-del" type="button" class="npp-cn-btn" style="flex:1;min-width:90px;padding:9px;color:var(--npp-danger);">🗑 Xoá</button>
             </div>
-            <h4 class="npp-font-bold npp-mt-3">Lịch sử hoạt động</h4>
+            <div class="npp-flex npp-justify-between npp-items-center npp-flex-wrap npp-mt-3" style="gap:6px;">
+                <h4 class="npp-font-bold">Lịch sử hoạt động</h4>
+                ${xlBtn('sm-xl', 'lịch sử nhân viên')}
+            </div>
             <div id="sm-hist" class="npp-km-hist npp-mt-2" data-staff="${attr(name)}"><div class="npp-skeleton" style="height:160px;"></div></div>`,
     });
     bindBack(back);
@@ -1351,6 +1614,11 @@ function staffModal(name, back) {
     });
     document.getElementById('sm-off')?.addEventListener('click', () => openOffboard(name, self));
     document.getElementById('sm-del').addEventListener('click', () => deleteStaff(s));
+    document.getElementById('sm-xl').addEventListener('click', (e) => {
+        const h = _hist && _hist.staff === name ? _hist : null;   // chỉ có khi lịch sử đã tải xong (và đúng NV này)
+        if (!h) return showToast('Lịch sử nhân viên chưa tải xong', 'warning');
+        exportHistory(h, e.currentTarget);
+    });
     loadStaffHistory(name, self);
 }
 
