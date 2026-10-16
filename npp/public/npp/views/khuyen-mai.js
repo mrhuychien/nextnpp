@@ -796,7 +796,16 @@ function exportPayouts(btn) {
 //   đủ cho MỌI lượt của NV, kể cả lượt ngoài chương trình đang lọc / khi danh sách tham gia chưa tải; null = không có,
 //   vd. điểm ngoài NPP / đã xoá → giữ trống, không bù). Salep cũ chưa trả key → bù từ _parts (lượt) rồi _points (SĐT).
 // - Điểm bán: MST, TK nhận thưởng, ngày tạo (staff_history không trả) bù từ _points đã tải.
+// - NV phụ trách = NV này cho MỌI dòng (`me` ghi đè sau cùng, như /dp): mọi điểm/lượt của staff_history đều của NV
+//   này; nhãn phụ trách của _parts/_points không dùng — hồ sơ NV của tài khoản NPP ở đó là "NPP (chưa giao)" nên
+//   nhãn sẽ đổi theo chương trình đang tải ở tab Chương trình.
+// - staff_history chỉ trả ≤ 1.000 lượt gần nhất (stats.participations = tổng thật) → toast cảnh báo khi thiếu.
 const HIST_PART_KEYS = ['point_phone', 'reject_reason', 'latitude', 'longitude'];
+function histPartsCap(d) {
+    const tot = ((d && d.stats) || {}).participations || 0;
+    const n = ((d && d.participations) || []).length;
+    return tot > n ? `${formatNumber(n)}/${formatNumber(tot)} lượt gần nhất` : '';
+}
 function exportHistory(h, btn) {
     runExport(btn, 'LichSuNhanVien', () => {
         const d = h.data || {};
@@ -804,10 +813,10 @@ function exportHistory(h, btn) {
         const byPt = new Map(_points.map((p) => [p.name, p]));
         const byPart = new Map(_parts.map((r) => [r.name, r]));
         const me = { owner_kind: 'staff', staff_name: info.full_name || (_staff.find((s) => s.name === h.staff) || {}).full_name || '', staff_left: !!info.resigned };
-        const pts = (d.points || []).map((p) => ({ ...me, ...(byPt.get(p.name) || {}), ...p }));
+        const pts = (d.points || []).map((p) => ({ ...(byPt.get(p.name) || {}), ...p, ...me }));
         const pas = (d.participations || []).map((r) => {
             const old = byPart.get(r.name) || {};
-            const row = { ...me, ...old, ...r };
+            const row = { ...old, ...r, ...me };
             HIST_PART_KEYS.forEach((k) => {
                 if (k in r) return;   // server mới: giá trị của dòng (kể cả null)
                 row[k] = k in old ? old[k] : (k === 'point_phone' ? (byPt.get(r.display_point) || {}).phone : undefined);
@@ -819,7 +828,10 @@ function exportHistory(h, btn) {
             { name: 'Tham gia', columns: partColumns(), rows: pas },
             { name: 'Bàn giao', columns: transferColumns(), rows: d.transfers || [] },
         ];
-    }, { countAll: true });
+    }, {
+        countAll: true,
+        note: () => { const c = histPartsCap(h.data); return c ? `sheet Tham gia chỉ gồm ${c}` : ''; },
+    });
 }
 
 // ─── TAB Nhân viên ─────────────────────────────────────────────────────
@@ -1677,7 +1689,7 @@ function renderHistory(h, self) {
     const d = h.data;
     const pts = d.points || [], pas = d.participations || [], trs = d.transfers || [];
     const pill = (k, label, n) => `<button type="button" data-h="${k}"${h.pill === k ? ' class="npp-active"' : ''}>${label} (${formatNumber(n)})</button>`;
-    const inner = h.pill === 'pa' ? histParts(pas) : (h.pill === 'tr' ? histTransfers(trs) : histPoints(h, pts));
+    const inner = h.pill === 'pa' ? histParts(pas, histPartsCap(d)) : (h.pill === 'tr' ? histTransfers(trs) : histPoints(h, pts));
     box.innerHTML = `<div class="npp-seg">${pill('pt', 'Điểm bán', pts.length)}${pill('pa', 'Tham gia', pas.length)}${pill('tr', 'Bàn giao', trs.length)}</div>
         <div class="npp-mt-2">${inner}</div>`;
     // GÁN onclick: box sống qua các trang của paged() (chỉ ruột wrapper được vẽ lại)
@@ -1738,9 +1750,9 @@ function histPoints(h, rows) {
         })}`;
 }
 
-function histParts(rows) {
+function histParts(rows, cap = '') {
     if (!rows.length) return '<div class="npp-text-sm npp-text-muted">Chưa có lượt tham gia nào.</div>';
-    return paged({
+    return (cap ? `<div class="npp-text-sm npp-text-muted npp-km-histcap">Chỉ hiển thị ${cap}.</div>` : '') + paged({
         rows, pageSize: PAGE,
         render: (slice) => `<div style="overflow-x:auto;"><table class="npp-table">
             <thead><tr><th>Điểm bán</th><th>Chương trình</th><th class="npp-text-center">Trạng thái</th><th>Cập nhật</th></tr></thead>
