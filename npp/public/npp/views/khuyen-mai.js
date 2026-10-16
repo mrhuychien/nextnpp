@@ -582,7 +582,8 @@ async function bulkSetActive(points, active, btn) {
 // File .xlsx dựng trên trình duyệt từ dữ liệu ĐÃ TẢI, theo đúng bộ lọc / tìm kiếm hiện tại: lấy từ
 // filtered*() / filterPayRows() trên TOÀN BỘ dòng (mọi trang của paged(), không chỉ trang đang xem).
 // Server đã scope theo NPP (require_customer) → file không chứa gì ngoài phạm vi người dùng được xem.
-// Key mới phía server (tax_code, bank_*, creation, point_bank_*, reward_per_point) thiếu → ô trống.
+// Key bổ sung phía server (doc/10 §4: tax_code, bank_*, creation, point_bank_*, reward_per_point, staff[].cccd,
+// staff_history.participations[].point_phone/reject_reason/latitude/longitude) — server cũ thiếu → ô trống, không vỡ.
 function xlScope() {
     const c = window.NPP_CONTEXT || {};
     return c.customerName || c.customer || _customer || '';
@@ -790,8 +791,12 @@ function exportPayouts(btn) {
             ? `chi tiết chỉ gồm ${formatNumber(PAY_ROWS_LIMIT)} lượt đầu${_payProg ? '' : ', chọn 1 chương trình để xuất đủ'}` : ''),
     });
 }
-// Modal lịch sử 1 NV (staff_history): 3 sheet Điểm bán · Tham gia · Bàn giao. Cột thiếu trong staff_history
-// (MST, TK nhận thưởng, ngày tạo, SĐT điểm, lý do từ chối, toạ độ lượt) bù từ _points / _parts đã tải.
+// Modal lịch sử 1 NV (staff_history): 3 sheet Điểm bán · Tham gia · Bàn giao.
+// - Tham gia: SĐT điểm / lý do từ chối / toạ độ lượt lấy THẲNG từ staff_history.participations (salep doc/10 §4 —
+//   đủ cho MỌI lượt của NV, kể cả lượt ngoài chương trình đang lọc / khi danh sách tham gia chưa tải; null = không có,
+//   vd. điểm ngoài NPP / đã xoá → giữ trống, không bù). Salep cũ chưa trả key → bù từ _parts (lượt) rồi _points (SĐT).
+// - Điểm bán: MST, TK nhận thưởng, ngày tạo (staff_history không trả) bù từ _points đã tải.
+const HIST_PART_KEYS = ['point_phone', 'reject_reason', 'latitude', 'longitude'];
 function exportHistory(h, btn) {
     runExport(btn, 'LichSuNhanVien', () => {
         const d = h.data || {};
@@ -800,9 +805,15 @@ function exportHistory(h, btn) {
         const byPart = new Map(_parts.map((r) => [r.name, r]));
         const me = { owner_kind: 'staff', staff_name: info.full_name || (_staff.find((s) => s.name === h.staff) || {}).full_name || '', staff_left: !!info.resigned };
         const pts = (d.points || []).map((p) => ({ ...me, ...(byPt.get(p.name) || {}), ...p }));
-        const pas = (d.participations || []).map((r) => ({
-            ...me, point_phone: (byPt.get(r.display_point) || {}).phone, ...(byPart.get(r.name) || {}), ...r,
-        }));
+        const pas = (d.participations || []).map((r) => {
+            const old = byPart.get(r.name) || {};
+            const row = { ...me, ...old, ...r };
+            HIST_PART_KEYS.forEach((k) => {
+                if (k in r) return;   // server mới: giá trị của dòng (kể cả null)
+                row[k] = k in old ? old[k] : (k === 'point_phone' ? (byPt.get(r.display_point) || {}).phone : undefined);
+            });
+            return row;
+        });
         return [
             { name: 'Điểm bán', columns: pointColumns(), rows: pts },
             { name: 'Tham gia', columns: partColumns(), rows: pas },

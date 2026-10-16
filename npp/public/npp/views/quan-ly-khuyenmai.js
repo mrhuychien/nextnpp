@@ -612,8 +612,8 @@ function renderRejected(rows) {
         <p class="npp-text-sm npp-text-muted npp-mt-2">Bấm 1 dòng để xem chi tiết + ảnh, và <strong>duyệt lại</strong> nếu nhân viên đã khắc phục.</p></div>`;
     c.querySelectorAll('.km-prow').forEach((tr) => tr.addEventListener('click', () => participationModal(tr.dataset.n)));
     bindXl('km-xl-tc', () => ({
-        // rejected_participations KHÔNG trả workflow_state (lọc sẵn = Từ chối) → gán lại, nếu không cột Trạng thái duyệt /
-        // Lý do từ chối trống trơn với server thật
+        // rejected_participations bản cũ KHÔNG trả workflow_state (lọc sẵn = Từ chối; bản bổ sung doc/10 đã trả) → gán lại,
+        // nếu không cột Trạng thái duyệt / Lý do từ chối trống trơn với server cũ
         base: 'TuChoi',
         sheets: [{ name: 'Từ chối', columns: partColumns(true), rows: rows.map((r) => ({ ...r, workflow_state: r.workflow_state || REJECTED })) }],
         // rejected_participations trả tối đa REJECTED_LIMIT lượt (mới nhất trước)
@@ -819,8 +819,10 @@ async function loadPayBox(name, tok, pointName, self) {
 // bộ lọc khác) và trả { base, scope?, sheets: [sheet chính, ...sheet phụ], note? } (null = job đã tự báo).
 // Danh sách nhóm theo NPP (điểm bán, nhân viên, ảnh theo tháng, tham gia 1 chương trình) trải phẳng thành dòng có
 // cột NPP. Phạm vi tên file: ToanKenh, hoặc tên NPP đang lọc (Trả thưởng). Dữ liệu đã do server gate quản lý kênh.
-// Cột §3 mà endpoint /ql-km CHƯA trả (vd. SĐT điểm của lượt chờ duyệt, CCCD nhân viên) đánh dấu `opt` → chỉ xuất
-// khi ít nhất 1 dòng có giá trị (không ra cột trống trơn; server bổ sung key sau là cột tự hiện).
+// Cột §3 mà promo_admin chỉ trả từ bản bổ sung doc/10 §4 (SĐT điểm / toạ độ lượt, số lượt của điểm, CCCD / ngày nghỉ /
+// số điểm phụ trách của NV, điểm đã duyệt / độ phủ của danh sách chương trình) đánh dấu `opt` = TÊN KEY: cột có mặt
+// (đúng vị trí §3) khi server trả key đó — giá trị rỗng → ô trống; server cũ chưa có key → bỏ cột (không ra cột trống
+// trơn). Có hay không cột theo PHIÊN BẢN server, không theo dữ liệu (CCCD chưa ai nhập vẫn ra cột).
 function xlBtn(id, what) {
     return `<button id="${id}" type="button" class="npp-cn-btn" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;" aria-label="Xuất Excel ${escapeHtml(what)}">⬇️ Xuất Excel</button>`;
 }
@@ -828,11 +830,10 @@ function bindXl(id, job) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => runExport(b, job));
 }
-const hasVal = (v) => v !== null && v !== undefined && v !== '';
-// Bỏ cột opt mà không dòng nào có giá trị.
+// Bỏ cột opt mà không dòng nào có key (server cũ).
 function xlSheet(sh) {
     const rows = sh.rows || [];
-    return { name: sh.name, rows, columns: sh.columns.filter((c) => !c.opt || rows.some((r, i) => hasVal(c.value(r, i)))) };
+    return { name: sh.name, rows, columns: sh.columns.filter((c) => !c.opt || rows.some((r) => c.opt in r)) };
 }
 // Nút khoá TỐI THIỂU chừng này ms (cùng khuyen-mai.js): file nhỏ dựng xong ~20–150ms, ngắn hơn khoảng cách 2 lần
 // chạm của 1 double-tap (50–500ms) → chỉ khoá "khi đang dựng" vẫn ra 2 file.
@@ -862,7 +863,7 @@ async function runExport(btn, job) {
     }
 }
 
-function xc(header, value, type = 'text', opt = false) { return { header, value, type, opt }; }
+function xc(header, value, type = 'text', opt = null) { return { header, value, type, opt }; }   // opt = key server (xem trên)
 const XC_STT = xc('STT', (r, i) => i + 1, 'int');
 const XC_NPP = xc('NPP', (r) => r.npp);
 const pctOf = (n, total) => (total ? (Number(n) || 0) / total * 100 : '');   // chưa có mẫu số → ô trống, không 0%
@@ -876,26 +877,28 @@ function flatGroups(groups, key) {
 }
 
 // Tham gia trưng bày (§3, /ql-km thêm NPP). Nguồn: pending_ / rejected_participations hoặc participants_by_npp —
-// không có SĐT điểm / toạ độ lượt → opt. withReason: tab Từ chối luôn có cột Lý do từ chối.
+// SĐT điểm / toạ độ lượt (của lượt, không phải của điểm) có từ bản bổ sung → opt. withReason: tab Từ chối luôn có cột
+// Lý do từ chối; nơi khác theo key reject_reason (chi tiết chương trình có; Cần duyệt không trả → không có cột).
 function partColumns(withReason) {
     return [
         XC_STT, XC_NPP,
         xc('Mã lượt', (r) => r.name),
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
-        xc('SĐT điểm', (r) => r.point_phone, 'text', true),
+        xc('SĐT điểm', (r) => r.point_phone, 'text', 'point_phone'),
         xc('Chương trình', (r) => r.program_name || r.promotion_program),
         xc('NV phụ trách', (r) => r.staff),
         xc('Trạng thái duyệt', (r) => r.workflow_state),
-        xc('Lý do từ chối', (r) => (r.workflow_state === REJECTED ? r.reject_reason : ''), 'text', !withReason),
+        xc('Lý do từ chối', (r) => (r.workflow_state === REJECTED ? r.reject_reason : ''), 'text', withReason ? null : 'reject_reason'),
         xc('Cập nhật', (r) => r.modified, 'datetime'),
-        xc('Vĩ độ', (r) => coord(r.latitude), 'number', true),
-        xc('Kinh độ', (r) => coord(r.longitude), 'number', true),
+        xc('Vĩ độ', (r) => coord(r.latitude), 'number', 'latitude'),
+        xc('Kinh độ', (r) => coord(r.longitude), 'number', 'longitude'),
     ];
 }
 
 // Sheet Chương trình (§3). list = bảng tab Chương trình → thêm STT · Mã chương trình đầu, Chờ duyệt · Số NPP như
-// màn hình; programs() không tính Điểm đã duyệt / Độ phủ (chỉ chi tiết 1 chương trình có) → opt.
+// màn hình; Thưởng/điểm = reward_per_point (0 = chưa đặt → trống). Điểm đã duyệt / Độ phủ: chi tiết 1 chương trình
+// luôn có (coverage), programs() chỉ có từ bản bổ sung → opt.
 function programColumns(list) {
     const cols = [
         xc('Chương trình', (p) => p.program_name || p.program),
@@ -908,15 +911,15 @@ function programColumns(list) {
     if (list) cols.push(xc('Chờ duyệt', (p) => p.pending || 0, 'int'));
     cols.push(
         xc('Đã duyệt', (p) => p.approved || 0, 'int'),
-        xc('Điểm đã duyệt', (p) => p.approved_points, 'int', true),
-        xc('Độ phủ %', (p) => p.coverage_pct, 'percent', true),
+        xc('Điểm đã duyệt', (p) => p.approved_points, 'int', 'approved_points'),
+        xc('Độ phủ %', (p) => p.coverage_pct, 'percent', 'coverage_pct'),
     );
     if (!list) return cols;
     return [XC_STT, xc('Mã chương trình', (p) => p.program), ...cols, xc('Số NPP', (p) => p.npp_count || 0, 'int')];
 }
 
 // Điểm bán (§3, /ql-km thêm NPP sau STT) — points_by_npp (key Excel: tax_code, bank_*, creation, staff_name).
-// points_by_npp không đếm lượt theo điểm → Số lượt tham gia / Lượt đã duyệt là opt.
+// Số lượt tham gia / Lượt đã duyệt (mọi chương trình, như point_detail.stats) có từ bản bổ sung → opt.
 function pointColumns() {
     return [
         XC_STT, XC_NPP,
@@ -927,8 +930,8 @@ function pointColumns() {
         xc('Mã số thuế', (p) => p.tax_code),
         xc('NV phụ trách', (p) => p.staff_name),
         xc('Trạng thái', (p) => (p.is_active ? 'Hoạt động' : 'Ngừng')),
-        xc('Số lượt tham gia', (p) => p.participations, 'int', true),
-        xc('Lượt đã duyệt', (p) => p.approved, 'int', true),
+        xc('Số lượt tham gia', (p) => p.participations, 'int', 'participations'),
+        xc('Lượt đã duyệt', (p) => p.approved, 'int', 'approved'),
         xc('Chủ TK nhận thưởng', (p) => p.bank_account_name),
         xc('Số TK', (p) => p.bank_account_no),
         xc('Ngân hàng', (p) => p.bank_name),
@@ -938,7 +941,8 @@ function pointColumns() {
     ];
 }
 
-// Nhân viên (§3 + NPP) — staff_by_npp: không có CCCD / ngày nghỉ / số điểm phụ trách → opt.
+// Nhân viên (§3 + NPP) — staff_by_npp: CCCD / ngày nghỉ / số điểm phụ trách (trong NPP của hồ sơ) có từ bản bổ sung
+// → opt; Trạng thái "Đã nghỉ" theo resigned (server cũ không có → Hoạt động / Tạm dừng như màn hình).
 function staffStatus(s) { return s.resigned ? 'Đã nghỉ' : (s.active ? 'Hoạt động' : 'Tạm dừng'); }
 function staffColumns() {
     return [
@@ -946,10 +950,10 @@ function staffColumns() {
         xc('Mã NV', (s) => s.name),
         xc('Họ tên', (s) => s.full_name),
         xc('SĐT (đăng nhập)', (s) => s.phone),
-        xc('CCCD', (s) => s.cccd, 'text', true),
+        xc('CCCD', (s) => s.cccd, 'text', 'cccd'),
         xc('Trạng thái', staffStatus),
-        xc('Ngày nghỉ', (s) => (s.resigned ? s.left_on : ''), 'date', true),
-        xc('Số điểm phụ trách', (s) => s.points, 'int', true),
+        xc('Ngày nghỉ', (s) => (s.resigned ? s.left_on : ''), 'date', 'left_on'),
+        xc('Số điểm phụ trách', (s) => s.points, 'int', 'points'),
         xc('Lượt tham gia', (s) => s.total || 0, 'int'),
         xc('Đã duyệt', (s) => s.approved || 0, 'int'),
         xc('Tỷ lệ duyệt %', (s) => pctOf(s.approved, s.total), 'percent'),

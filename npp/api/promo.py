@@ -37,6 +37,8 @@ TRANSFER_DOCTYPE = "Display Point Transfer"  # nhật ký bàn giao điểm (sal
 PAYOUT_DOCTYPE = "Display Reward Payout"  # trả thưởng 2 lần (salep doc/09, có sau bench migrate)
 INTERNAL_ROLES = {"System Manager", "Channel Manager"}  # tài khoản nội bộ — NPP không được khoá
 PARTS_LIMIT = 2000  # npp_participations: lượt mới nhất (khớp salep participations; UI báo khi chạm trần)
+# Display Point: MST + tài khoản nhận thưởng — cột xuất Excel danh sách điểm bán (salep doc/10 §4)
+POINT_EXPORT_FIELDS = ("tax_code", "bank_account_name", "bank_account_no", "bank_name")
 # owner rỗng/không xác định → coi như "other" (không thuộc NV nào của NPP)
 _NO_OWNER = {"owner_kind": "other", "staff": None, "staff_name": "", "staff_left": False}
 
@@ -85,6 +87,13 @@ def _own_participation(participation, customer) -> str:
 def _staff_has(fieldname: str) -> bool:
     """Sales Staff Profile đã có field này chưa (salep cũ thiếu employment_status/left_on/handover_to)."""
     return frappe.get_meta("Sales Staff Profile").has_field(fieldname)
+
+
+def _point_export_fields() -> list[str]:
+    """Cột xuất Excel đã có trên Display Point (salep trước 2026-07 chưa có tax_code) → chỉ đọc cột có;
+    key thiếu trả None (không vỡ cả tab Khuyến mại vì "Unknown column")."""
+    meta = frappe.get_meta("Display Point")
+    return [f for f in POINT_EXPORT_FIELDS if meta.has_field(f)]
 
 
 def _staff_profiles(customer: str) -> list[dict]:
@@ -151,11 +160,12 @@ def npp_overview(customer: str | None = None) -> dict:
     customer = require_customer(customer)
     _require_salep()
 
-    # Điểm bán của NPP (owner = NV phụ trách điểm)
+    # Điểm bán của NPP (owner = NV phụ trách điểm) + MST / TK nhận thưởng / ngày tạo (cột Excel)
     points = frappe.get_all(
         "Display Point", filters={"distributor": customer},
         fields=["name", "point_name", "address_line", "phone", "is_active",
-                "latitude", "longitude", "owner"], order_by="point_name asc")
+                "latitude", "longitude", "owner", *_point_export_fields(), "creation"],
+        order_by="point_name asc")
     active_points = sum(1 for p in points if p.get("is_active"))
 
     # Tham gia của NPP (mọi chương trình)
@@ -229,6 +239,7 @@ def npp_overview(customer: str | None = None) -> dict:
     for u, b in by_staff.items():
         if u and u not in seen and u not in npp:
             staff_rows.append({"name": None, "user": u, "full_name": u, "phone": None,
+                               "cccd": None,  # không có hồ sơ → không CCCD (cùng shape dòng có hồ sơ)
                                "total": b["total"], "approved": b["approved"], "active": True,
                                "points": pts_by_owner.get(u, 0), "employment_status": None,
                                "resigned": False, "left_on": None})
@@ -240,7 +251,9 @@ def npp_overview(customer: str | None = None) -> dict:
     point_rows = []
     for p in points:
         bp = by_point.get(p["name"], {"total": 0, "approved": 0})
-        point_rows.append({**p, "is_active": bool(p.get("is_active")),
+        point_rows.append({**p, **{f: p.get(f) for f in POINT_EXPORT_FIELDS},  # salep cũ thiếu cột → None
+                           "is_active": bool(p.get("is_active")),
+                           "creation": str(p["creation"]) if p.get("creation") else None,
                            "participated": p["name"] in participated,
                            **(who.get(p.get("owner")) or _NO_OWNER),
                            "participations": bp["total"], "approved": bp["approved"]})

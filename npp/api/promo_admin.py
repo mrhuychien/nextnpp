@@ -11,6 +11,8 @@ Trả thưởng điểm bán 2 lần (salep doc/09): gọi hàm lõi `salep.api.
 
 from __future__ import annotations
 
+from collections import Counter
+
 import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, get_first_day, get_last_day, getdate, now_datetime
@@ -26,6 +28,11 @@ REJECTED = "Từ chối"
 DECIDED = {APPROVED, REJECTED}
 ADMIN_ROLES = {"System Manager", "Channel Manager", "Sales Manager", "Accounts Manager"}
 PAYOUT_DOCTYPE = "Display Reward Payout"  # trả thưởng 2 lần (salep doc/09, có sau bench migrate)
+NPP_HOLD_LABEL = "NPP (chưa giao)"  # điểm do chính tài khoản NPP giữ (cùng nhãn /npp, salep doc/08)
+# Display Point: MST + tài khoản nhận thưởng — cột xuất Excel danh sách điểm bán (salep doc/10 §4)
+POINT_EXPORT_FIELDS = ("tax_code", "bank_account_name", "bank_account_no", "bank_name")
+STAFF_WORKING = "Đang làm"  # Sales Staff Profile.employment_status (salep doc/08) — cùng nhãn /npp
+STAFF_LEFT = "Nghỉ việc"
 
 
 def _is_pending(state) -> bool:
@@ -81,8 +88,49 @@ def _staff_names() -> dict:
         "Sales Staff Profile", fields=["user", "full_name"]) if s.get("user")}
 
 
+def _owner_accounts(users) -> tuple[dict, dict]:
+    """Cho LÔ user: (user → set NPP mà user là tài khoản NPP, user → họ tên User). Tài khoản NPP =
+    User.custom_customer ∪ Portal User của Customer (cùng định nghĩa salep / promo._npp_users).
+    1–2 truy vấn cho cả lô (không N+1)."""
+    users = [u for u in users if u]
+    if not users:
+        return {}, {}
+    npp_of: dict = {}
+    full: dict = {}
+    for u in frappe.get_all("User", filters={"name": ["in", users]},
+                            fields=["name", "full_name", "custom_customer"]):
+        full[u["name"]] = u.get("full_name")
+        if u.get("custom_customer"):
+            npp_of.setdefault(u["name"], set()).add(u["custom_customer"])
+    try:
+        for r in frappe.get_all("Portal User", filters={"parenttype": "Customer", "user": ["in", users]},
+                                fields=["parent", "user"]):
+            npp_of.setdefault(r["user"], set()).add(r["parent"])
+    except Exception:  # site không có doctype Portal User → chỉ dùng custom_customer
+        pass
+    return npp_of, full
+
+
+def _point_export_fields() -> list[str]:
+    """Cột xuất Excel đã có trên Display Point (salep trước 2026-07 chưa có tax_code) → chỉ đọc cột có;
+    key thiếu trả None (không vỡ tab Điểm bán vì "Unknown column")."""
+    meta = frappe.get_meta("Display Point")
+    return [f for f in POINT_EXPORT_FIELDS if meta.has_field(f)]
+
+
 def _point_names() -> dict:
     return {r["name"]: r["point_name"] for r in frappe.get_all("Display Point", fields=["name", "point_name"])}
+
+
+def _point_info() -> dict:
+    """name → {point_name, phone} của mọi điểm bán — 1 truy vấn (thay _point_names ở danh sách lượt tham gia:
+    thêm cột SĐT điểm cho file Excel, salep doc/10 §3, không thêm truy vấn)."""
+    return {r["name"]: r for r in frappe.get_all("Display Point", fields=["name", "point_name", "phone"])}
+
+
+def _staff_has(fieldname: str) -> bool:
+    """Sales Staff Profile đã có field này chưa (salep cũ thiếu employment_status/left_on) — như promo."""
+    return frappe.get_meta("Sales Staff Profile").has_field(fieldname)
 
 
 def _program_names() -> dict:
@@ -92,13 +140,29 @@ def _program_names() -> dict:
 # ─── Tab 1: Điểm bán theo NPP ─────────────────────────────────────────────
 @frappe.whitelist()
 def points_by_npp() -> dict:
+    """Điểm bán MỌI NPP, nhóm theo NPP (+ MST / TK nhận thưởng / ngày tạo / NV phụ trách / số lượt, lượt đã duyệt
+    cho file Excel — salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     pts = frappe.get_all(
         "Display Point",
-        fields=["name", "point_name", "distributor", "address_line", "phone", "is_active", "latitude", "longitude"],
+        fields=["name", "point_name", "distributor", "address_line", "phone", "is_active", "latitude", "longitude",
+                # cột xuất Excel (salep doc/10 §4): MST, TK nhận thưởng, ngày tạo, NV phụ trách (= owner)
+                *_point_export_fields(), "creation", "owner"],
         order_by="point_name asc")
     cn = _cust_names({p["distributor"] for p in pts})
+    # Nhãn NV phụ trách điểm (cùng nghĩa /npp): tài khoản của chính NPP đó → "NPP (chưa giao)";
+    # có hồ sơ NV → họ tên; còn lại → họ tên User / user id. Tra theo lô.
+    sn = _staff_names()
+    npp_of, full = _owner_accounts({p.get("owner") for p in pts})
+    # Số lượt tham gia / lượt đã duyệt của từng điểm (cột Excel doc/10 §3; cùng nghĩa point_detail.stats:
+    # mọi chương trình). 1 truy vấn cho CẢ danh sách, đếm trong Python (không N+1).
+    n_parts, n_appr = Counter(), Counter()
+    if pts:
+        for r in frappe.get_all("Display Participation", fields=["display_point", "workflow_state"]):
+            n_parts[r.get("display_point")] += 1
+            if r.get("workflow_state") == APPROVED:
+                n_appr[r.get("display_point")] += 1
     groups: dict = {}
     for p in pts:
         d = p.get("distributor") or "—"
@@ -106,20 +170,37 @@ def points_by_npp() -> dict:
         g["count"] += 1
         if p.get("is_active"):
             g["active"] += 1
+        owner = p.get("owner")
+        if not owner:
+            staff_name = ""
+        elif p.get("distributor") and p["distributor"] in npp_of.get(owner, ()):
+            staff_name = NPP_HOLD_LABEL
+        else:
+            staff_name = sn.get(owner) or full.get(owner) or owner
         g["points"].append({
             "name": p["name"], "point_name": p.get("point_name") or p["name"],
             "address_line": p.get("address_line"), "phone": p.get("phone"),
-            "is_active": bool(p.get("is_active")), "latitude": p.get("latitude"), "longitude": p.get("longitude")})
+            "is_active": bool(p.get("is_active")), "latitude": p.get("latitude"), "longitude": p.get("longitude"),
+            "tax_code": p.get("tax_code"), "bank_account_name": p.get("bank_account_name"),
+            "bank_account_no": p.get("bank_account_no"), "bank_name": p.get("bank_name"),
+            "creation": str(p["creation"]) if p.get("creation") else None,
+            "owner": owner, "staff_name": staff_name,
+            "participations": n_parts.get(p["name"], 0), "approved": n_appr.get(p["name"], 0)})
     return {"npps": sorted(groups.values(), key=lambda x: x["count"], reverse=True), "total": len(pts)}
 
 
 # ─── Tab 3: Nhân viên theo NPP ────────────────────────────────────────────
 @frappe.whitelist()
 def staff_by_npp() -> dict:
+    """Nhân viên MỌI NPP, nhóm theo NPP + tiến độ (+ CCCD / trạng thái làm việc / ngày nghỉ / số điểm phụ trách cho
+    file Excel — salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
-    staff = frappe.get_all("Sales Staff Profile",
-                           fields=["name", "user", "full_name", "phone", "distributor"], order_by="full_name asc")
+    # + CCCD / trạng thái làm việc / ngày nghỉ cho file Excel (doc/10 §3). Field nghỉ việc chỉ đọc khi đã có
+    # (salep cũ thiếu → coi như Đang làm, như /npp).
+    fields = ["name", "user", "full_name", "phone", "distributor", "cccd"]
+    fields += [f for f in ("employment_status", "left_on") if _staff_has(f)]
+    staff = frappe.get_all("Sales Staff Profile", fields=fields, order_by="full_name asc")
     by_owner: dict = {}
     for p in frappe.get_all("Display Participation", fields=["owner", "workflow_state"]):
         b = by_owner.setdefault(p.get("owner"), {"total": 0, "approved": 0})
@@ -129,22 +210,33 @@ def staff_by_npp() -> dict:
     users = [s["user"] for s in staff if s.get("user")]
     enabled = {u["name"]: u["enabled"] for u in frappe.get_all(
         "User", filters={"name": ["in", users]}, fields=["name", "enabled"])} if users else {}
+    # Số điểm phụ trách = Display Point.owner == user TRONG NPP của hồ sơ (cùng nghĩa /npp staff[].points).
+    # 1 truy vấn cho cả lô user, đếm theo (owner, distributor) — không N+1.
+    pts_by = Counter((p.get("owner"), p.get("distributor")) for p in frappe.get_all(
+        "Display Point", filters={"owner": ["in", users]}, fields=["owner", "distributor"])
+    ) if users else Counter()
     cn = _cust_names({s["distributor"] for s in staff})
     groups: dict = {}
     for s in staff:
         d = s.get("distributor") or "—"
         g = groups.setdefault(d, {"customer": d, "customer_name": cn.get(d, d), "staff": []})
         b = by_owner.get(s.get("user"), {"total": 0, "approved": 0})
+        status = s.get("employment_status") or STAFF_WORKING  # salep cũ/rỗng → coi như Đang làm (như /npp)
         g["staff"].append({
             "name": s["name"], "user": s["user"], "full_name": s.get("full_name") or s["user"],
             "phone": s.get("phone"), "total": b["total"], "approved": b["approved"],
-            "active": bool(enabled.get(s["user"], 1)) if s.get("user") else True})
+            "active": bool(enabled.get(s["user"], 1)) if s.get("user") else True,
+            "cccd": s.get("cccd"), "employment_status": status, "resigned": status == STAFF_LEFT,
+            "left_on": str(s["left_on"]) if s.get("left_on") else None,
+            "points": pts_by.get((s["user"], s.get("distributor")), 0) if s.get("user") else 0})
     return {"npps": sorted(groups.values(), key=lambda x: len(x["staff"]), reverse=True), "total": len(staff)}
 
 
 # ─── Tab 2: Chương trình ──────────────────────────────────────────────────
 @frappe.whitelist()
 def programs() -> list[dict]:
+    """Danh sách chương trình + tiến độ toàn kênh (+ điểm đã duyệt / độ phủ % cho file Excel — salep doc/10).
+    Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     progs = frappe.get_all(
@@ -154,7 +246,8 @@ def programs() -> list[dict]:
     agg: dict = {}
     for p in frappe.get_all("Display Participation",
                             fields=["promotion_program", "workflow_state", "display_point", "distributor"]):
-        a = agg.setdefault(p["promotion_program"], {"total": 0, "approved": 0, "pending": 0, "pts": set(), "npps": set()})
+        a = agg.setdefault(p["promotion_program"], {"total": 0, "approved": 0, "pending": 0, "pts": set(),
+                                                    "npps": set(), "appr_pts": set()})
         a["total"] += 1
         if p.get("display_point"):
             a["pts"].add(p["display_point"])
@@ -163,11 +256,16 @@ def programs() -> list[dict]:
         st = p.get("workflow_state")
         if st == APPROVED:
             a["approved"] += 1
+            if p.get("display_point"):
+                a["appr_pts"].add(p["display_point"])
         elif st != REJECTED:        # chưa quyết định (Chờ duyệt/Nháp/…) = cần duyệt
             a["pending"] += 1
+    # Mẫu số độ phủ = điểm đang hoạt động của MỌI NPP (cùng nghĩa program_detail.coverage) — 1 lệnh count
+    total_active = frappe.db.count("Display Point", {"is_active": 1}) if progs else 0
     rows = []
     for pg in progs:
-        a = agg.get(pg["name"], {"total": 0, "approved": 0, "pending": 0, "pts": set(), "npps": set()})
+        a = agg.get(pg["name"], {"total": 0, "approved": 0, "pending": 0, "pts": set(), "npps": set(),
+                                 "appr_pts": set()})
         rows.append({
             "program": pg["name"], "program_name": pg.get("program_name") or pg["name"], "status": pg.get("status"),
             "start_date": str(pg["start_date"]) if pg.get("start_date") else None,
@@ -175,13 +273,18 @@ def programs() -> list[dict]:
             "budget": pg.get("budget") or 0, "reward_per_point": pg.get("reward_per_point") or 0,
             "target_points": pg.get("target_points") or 0,
             "participations": a["total"], "approved": a["approved"], "pending": a["pending"],
-            "points": len(a["pts"]), "npp_count": len(a["npps"])})
+            "points": len(a["pts"]), "npp_count": len(a["npps"]),
+            # cột Excel sheet Chương trình (doc/10 §3): Điểm đã duyệt (điểm ≥1 lượt duyệt) · Độ phủ %
+            "approved_points": len(a["appr_pts"]),
+            "coverage_pct": (len(a["appr_pts"]) / total_active * 100) if total_active else 0})
     rows.sort(key=lambda x: (x["status"] != "Đang chạy", -x["pending"], -x["participations"]))
     return rows
 
 
 @frappe.whitelist()
 def program_detail(program: str) -> dict:
+    """Chi tiết 1 chương trình: cần duyệt, theo NPP / NV, bản đồ, mọi lượt tham gia theo NPP (+ SĐT điểm / toạ độ
+    lượt / lý do từ chối cho file Excel — salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     pg = frappe.db.get_value(
@@ -191,11 +294,21 @@ def program_detail(program: str) -> dict:
     if not pg:
         frappe.throw(_("Chương trình không tồn tại"))
     parts = frappe.get_all("Display Participation", filters={"promotion_program": program},
-                           fields=["name", "display_point", "distributor", "owner", "workflow_state", "modified"],
+                           fields=["name", "display_point", "distributor", "owner", "workflow_state", "modified",
+                                   # cột Excel Tham gia trưng bày (doc/10 §3): toạ độ lượt + lý do từ chối
+                                   "latitude", "longitude", "reject_reason"],
                            order_by="modified desc")
     cn = _cust_names({p["distributor"] for p in parts})
     sn = _staff_names()
     pt_names = _point_names()
+
+    # Điểm bán tham gia chương trình: tên/địa chỉ/toạ độ (bản đồ) + SĐT điểm (cột Excel) — 1 truy vấn theo lô
+    dp_ids = list({p["display_point"] for p in parts if p.get("display_point")})
+    coords = {}
+    if dp_ids:
+        coords = {r["name"]: r for r in frappe.get_all(
+            "Display Point", filters={"name": ["in", dp_ids]},
+            fields=["name", "point_name", "address_line", "latitude", "longitude", "distributor", "phone"])}
 
     # Active points per NPP (mẫu số độ phủ)
     npp_active: dict = {}
@@ -220,7 +333,10 @@ def program_detail(program: str) -> dict:
         grp["items"].append({"name": p["name"], "display_point": p.get("display_point"),
                              "point_name": pt_names.get(p["display_point"]) or p["display_point"],
                              "workflow_state": st, "staff": sn.get(p.get("owner")) or p.get("owner"),
-                             "date": str(p["modified"]) if p.get("modified") else None})
+                             "date": str(p["modified"]) if p.get("modified") else None,
+                             "point_phone": (coords.get(p.get("display_point")) or {}).get("phone"),
+                             "latitude": p.get("latitude"), "longitude": p.get("longitude"),
+                             "reject_reason": p.get("reject_reason")})
         if st == APPROVED:
             grp["approved"] += 1
         if p.get("display_point"):
@@ -260,14 +376,8 @@ def program_detail(program: str) -> dict:
         new_points = frappe.db.count(
             "Display Point", {"creation": ["between", [str(getdate(pg["start_date"])), str(add_days(end, 1))]]})
 
-    # Điểm bán tham gia chương trình (gộp theo điểm) + toạ độ cho bản đồ.
+    # Điểm bán tham gia chương trình (gộp theo điểm, `coords` tải ở trên) + toạ độ cho bản đồ.
     # Trạng thái điểm = "đã duyệt" nếu có ÍT NHẤT 1 lượt được duyệt, ngược lại "chờ".
-    dp_ids = list({p["display_point"] for p in parts if p.get("display_point")})
-    coords = {}
-    if dp_ids:
-        coords = {r["name"]: r for r in frappe.get_all(
-            "Display Point", filters={"name": ["in", dp_ids]},
-            fields=["name", "point_name", "address_line", "latitude", "longitude", "distributor"])}
     pmap = {}
     for p in parts:
         dp = p.get("display_point")
@@ -298,6 +408,8 @@ def program_detail(program: str) -> dict:
 # ─── Tab 4: Điểm bán cần duyệt ────────────────────────────────────────────
 @frappe.whitelist()
 def pending_participations(program: str | None = None) -> list[dict]:
+    """Lượt tham gia CHƯA quyết định (mọi NPP, lọc chương trình nếu có) + SĐT điểm / toạ độ lượt cho file Excel
+    (salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     # Lấy mọi lượt rồi lọc "chưa quyết định" trong Python (NULL-safe; SQL NOT IN bỏ
@@ -305,15 +417,18 @@ def pending_participations(program: str | None = None) -> list[dict]:
     filters = {"promotion_program": program} if program else {}
     rows = frappe.get_all("Display Participation", filters=filters,
                           fields=["name", "display_point", "promotion_program", "distributor",
-                                  "owner", "workflow_state", "modified"],
+                                  "owner", "workflow_state", "modified",
+                                  "latitude", "longitude"],   # toạ độ lượt — cột Excel (doc/10 §3)
                           order_by="modified asc")
     rows = [r for r in rows if _is_pending(r.get("workflow_state"))]
     if not rows:
         return []
-    pt, pg, sn = _point_names(), _program_names(), _staff_names()
+    pt, pg, sn = _point_info(), _program_names(), _staff_names()
     cn = _cust_names({r["distributor"] for r in rows})
     for r in rows:
-        r["point_name"] = pt.get(r["display_point"]) or r["display_point"]
+        info = pt.get(r["display_point"]) or {}
+        r["point_name"] = info.get("point_name") or r["display_point"]
+        r["point_phone"] = info.get("phone")  # SĐT điểm — cột Excel (doc/10 §3)
         r["program_name"] = pg.get(r["promotion_program"]) or r["promotion_program"]
         r["npp"] = cn.get(r.get("distributor")) or r.get("distributor")
         r["staff"] = sn.get(r.get("owner")) or r.get("owner")
@@ -604,14 +719,18 @@ def rejected_participations(program: str | None = None) -> list[dict]:
         filters["promotion_program"] = program
     rows = frappe.get_all("Display Participation", filters=filters,
                           fields=["name", "display_point", "promotion_program", "distributor",
-                                  "owner", "reject_reason", "modified"],
+                                  "owner", "reject_reason", "modified",
+                                  "latitude", "longitude"],   # toạ độ lượt — cột Excel (doc/10 §3)
                           order_by="modified desc", limit_page_length=500)
     if not rows:
         return []
-    pt, pg, sn = _point_names(), _program_names(), _staff_names()
+    pt, pg, sn = _point_info(), _program_names(), _staff_names()
     cn = _cust_names({r["distributor"] for r in rows})
     for r in rows:
-        r["point_name"] = pt.get(r["display_point"]) or r["display_point"]
+        info = pt.get(r["display_point"]) or {}
+        r["point_name"] = info.get("point_name") or r["display_point"]
+        r["point_phone"] = info.get("phone")  # SĐT điểm — cột Excel (doc/10 §3)
+        r["workflow_state"] = REJECTED  # lọc sẵn = Từ chối → cột Trạng thái duyệt / Lý do từ chối của file Excel
         r["program_name"] = pg.get(r["promotion_program"]) or r["promotion_program"]
         r["npp"] = cn.get(r.get("distributor")) or r.get("distributor")
         r["staff"] = sn.get(r.get("owner")) or r.get("owner")
