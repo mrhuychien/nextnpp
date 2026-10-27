@@ -214,7 +214,7 @@ frappe.call('npp.api.promo.npp_overview').then(r => console.log(r.message.totals
 //   staff[i] có points, employment_status ('Đang làm'|'Nghỉ việc'), resigned, left_on
 
 frappe.call('npp.api.promo.npp_participations').then(r => console.log(r.message[0]))
-// Kỳ vọng: mỗi dòng có point_phone, staff, staff_name, staff_left, owner_kind, program_active (tối đa 2000 dòng)
+// Kỳ vọng: mỗi dòng có point_phone, point_address, staff, staff_name, staff_left, owner_kind, program_active (tối đa 2000 dòng)
 
 frappe.call('npp.api.promo.staff_history', { staff: 'NV-00001' }).then(console.log)
 // Kỳ vọng: { staff, stats, points[], participations[], transfers[] }; NV của NPP khác → PermissionError

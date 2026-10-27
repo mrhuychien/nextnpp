@@ -123,9 +123,10 @@ def _point_names() -> dict:
 
 
 def _point_info() -> dict:
-    """name → {point_name, phone} của mọi điểm bán — 1 truy vấn (thay _point_names ở danh sách lượt tham gia:
-    thêm cột SĐT điểm cho file Excel, salep doc/10 §3, không thêm truy vấn)."""
-    return {r["name"]: r for r in frappe.get_all("Display Point", fields=["name", "point_name", "phone"])}
+    """name → {point_name, phone, address_line} của mọi điểm bán — 1 truy vấn (thay _point_names ở danh sách
+    lượt tham gia: thêm cột SĐT điểm + Địa chỉ cho file Excel, salep doc/10 §3, không thêm truy vấn)."""
+    return {r["name"]: r for r in frappe.get_all(
+        "Display Point", fields=["name", "point_name", "phone", "address_line"])}
 
 
 def _staff_has(fieldname: str) -> bool:
@@ -283,8 +284,8 @@ def programs() -> list[dict]:
 
 @frappe.whitelist()
 def program_detail(program: str) -> dict:
-    """Chi tiết 1 chương trình: cần duyệt, theo NPP / NV, bản đồ, mọi lượt tham gia theo NPP (+ SĐT điểm / toạ độ
-    lượt / lý do từ chối cho file Excel — salep doc/10). Permission: quản lý kênh (_guard)."""
+    """Chi tiết 1 chương trình: cần duyệt, theo NPP / NV, bản đồ, mọi lượt tham gia theo NPP (+ SĐT / địa chỉ
+    điểm, toạ độ lượt, lý do từ chối cho file Excel — salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     pg = frappe.db.get_value(
@@ -302,7 +303,8 @@ def program_detail(program: str) -> dict:
     sn = _staff_names()
     pt_names = _point_names()
 
-    # Điểm bán tham gia chương trình: tên/địa chỉ/toạ độ (bản đồ) + SĐT điểm (cột Excel) — 1 truy vấn theo lô
+    # Điểm bán tham gia chương trình: tên/địa chỉ/toạ độ (bản đồ) + SĐT / địa chỉ điểm (cột Excel)
+    # — 1 truy vấn theo lô
     dp_ids = list({p["display_point"] for p in parts if p.get("display_point")})
     coords = {}
     if dp_ids:
@@ -330,11 +332,12 @@ def program_detail(program: str) -> dict:
         b["total"] += 1
         # Danh sách điểm bán tham gia (đầy đủ) theo NPP — cho list xổ/thu ở UI.
         grp = parts_by_npp.setdefault(d, {"customer": d, "customer_name": cn.get(d, d), "approved": 0, "items": []})
+        info = coords.get(p.get("display_point")) or {}   # điểm đã xoá → SĐT / địa chỉ = None
         grp["items"].append({"name": p["name"], "display_point": p.get("display_point"),
                              "point_name": pt_names.get(p["display_point"]) or p["display_point"],
                              "workflow_state": st, "staff": sn.get(p.get("owner")) or p.get("owner"),
                              "date": str(p["modified"]) if p.get("modified") else None,
-                             "point_phone": (coords.get(p.get("display_point")) or {}).get("phone"),
+                             "point_phone": info.get("phone"), "point_address": info.get("address_line"),
                              "latitude": p.get("latitude"), "longitude": p.get("longitude"),
                              "reject_reason": p.get("reject_reason")})
         if st == APPROVED:
@@ -408,8 +411,8 @@ def program_detail(program: str) -> dict:
 # ─── Tab 4: Điểm bán cần duyệt ────────────────────────────────────────────
 @frappe.whitelist()
 def pending_participations(program: str | None = None) -> list[dict]:
-    """Lượt tham gia CHƯA quyết định (mọi NPP, lọc chương trình nếu có) + SĐT điểm / toạ độ lượt cho file Excel
-    (salep doc/10). Permission: quản lý kênh (_guard)."""
+    """Lượt tham gia CHƯA quyết định (mọi NPP, lọc chương trình nếu có) + SĐT / địa chỉ điểm, toạ độ lượt cho
+    file Excel (salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     # Lấy mọi lượt rồi lọc "chưa quyết định" trong Python (NULL-safe; SQL NOT IN bỏ
@@ -429,6 +432,7 @@ def pending_participations(program: str | None = None) -> list[dict]:
         info = pt.get(r["display_point"]) or {}
         r["point_name"] = info.get("point_name") or r["display_point"]
         r["point_phone"] = info.get("phone")  # SĐT điểm — cột Excel (doc/10 §3)
+        r["point_address"] = info.get("address_line")  # Địa chỉ điểm — cột Excel (doc/10 §3)
         r["program_name"] = pg.get(r["promotion_program"]) or r["promotion_program"]
         r["npp"] = cn.get(r.get("distributor")) or r.get("distributor")
         r["staff"] = sn.get(r.get("owner")) or r.get("owner")
@@ -711,7 +715,8 @@ def photo_refresh(month: str | None = None, days_recent: int = 7) -> dict:
 # ─── Điểm bán bị TỪ CHỐI ──────────────────────────────────────────────────────
 @frappe.whitelist()
 def rejected_participations(program: str | None = None) -> list[dict]:
-    """Danh sách lượt tham gia bị TỪ CHỐI (kèm lý do) để theo dõi & xử lý lại."""
+    """Danh sách lượt tham gia bị TỪ CHỐI (kèm lý do) để theo dõi & xử lý lại; + SĐT / địa chỉ điểm, toạ độ
+    lượt cho file Excel (salep doc/10). Permission: quản lý kênh (_guard)."""
     _guard()
     _require_salep()
     filters = {"workflow_state": REJECTED}
@@ -730,6 +735,7 @@ def rejected_participations(program: str | None = None) -> list[dict]:
         info = pt.get(r["display_point"]) or {}
         r["point_name"] = info.get("point_name") or r["display_point"]
         r["point_phone"] = info.get("phone")  # SĐT điểm — cột Excel (doc/10 §3)
+        r["point_address"] = info.get("address_line")  # Địa chỉ điểm — cột Excel (doc/10 §3)
         r["workflow_state"] = REJECTED  # lọc sẵn = Từ chối → cột Trạng thái duyệt / Lý do từ chối của file Excel
         r["program_name"] = pg.get(r["promotion_program"]) or r["promotion_program"]
         r["npp"] = cn.get(r.get("distributor")) or r.get("distributor")

@@ -819,10 +819,11 @@ async function loadPayBox(name, tok, pointName, self) {
 // bộ lọc khác) và trả { base, scope?, sheets: [sheet chính, ...sheet phụ], note? } (null = job đã tự báo).
 // Danh sách nhóm theo NPP (điểm bán, nhân viên, ảnh theo tháng, tham gia 1 chương trình) trải phẳng thành dòng có
 // cột NPP. Phạm vi tên file: ToanKenh, hoặc tên NPP đang lọc (Trả thưởng). Dữ liệu đã do server gate quản lý kênh.
-// Cột §3 mà promo_admin chỉ trả từ bản bổ sung doc/10 §4 (SĐT điểm / toạ độ lượt, số lượt của điểm, CCCD / ngày nghỉ /
-// số điểm phụ trách của NV, điểm đã duyệt / độ phủ của danh sách chương trình) đánh dấu `opt` = TÊN KEY: cột có mặt
-// (đúng vị trí §3) khi server trả key đó — giá trị rỗng → ô trống; server cũ chưa có key → bỏ cột (không ra cột trống
-// trơn). Có hay không cột theo PHIÊN BẢN server, không theo dữ liệu (CCCD chưa ai nhập vẫn ra cột).
+// Cột §3 mà promo_admin chỉ trả từ bản bổ sung doc/10 §4 (SĐT / địa chỉ điểm, toạ độ lượt, số lượt của điểm, CCCD /
+// ngày nghỉ / số điểm phụ trách của NV, điểm đã duyệt / độ phủ của danh sách chương trình; địa chỉ điểm của dòng trả
+// thưởng — salep payout.progress) đánh dấu `opt` = TÊN KEY: cột có mặt (đúng vị trí §3) khi server trả key đó — giá
+// trị rỗng → ô trống; server cũ chưa có key → bỏ cột (không ra cột trống trơn). Có hay không cột theo PHIÊN BẢN
+// server, không theo dữ liệu (CCCD chưa ai nhập vẫn ra cột).
 function xlBtn(id, what) {
     return `<button id="${id}" type="button" class="npp-cn-btn" style="padding:7px 12px;font-size:.85rem;width:auto;flex:none;" aria-label="Xuất Excel ${escapeHtml(what)}">⬇️ Xuất Excel</button>`;
 }
@@ -877,8 +878,9 @@ function flatGroups(groups, key) {
 }
 
 // Tham gia trưng bày (§3, /ql-km thêm NPP). Nguồn: pending_ / rejected_participations hoặc participants_by_npp —
-// SĐT điểm / toạ độ lượt (của lượt, không phải của điểm) có từ bản bổ sung → opt. withReason: tab Từ chối luôn có cột
-// Lý do từ chối; nơi khác theo key reject_reason (chi tiết chương trình có; Cần duyệt không trả → không có cột).
+// SĐT / địa chỉ điểm, toạ độ lượt (của lượt, không phải của điểm) có từ bản bổ sung → opt. withReason: tab Từ chối
+// luôn có cột Lý do từ chối; nơi khác theo key reject_reason (chi tiết chương trình có; Cần duyệt không trả → không
+// có cột).
 function partColumns(withReason) {
     return [
         XC_STT, XC_NPP,
@@ -886,6 +888,7 @@ function partColumns(withReason) {
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
         xc('SĐT điểm', (r) => r.point_phone, 'text', 'point_phone'),
+        xc('Địa chỉ', (r) => r.point_address, 'text', 'point_address'),
         xc('Chương trình', (r) => r.program_name || r.promotion_program),
         xc('NV phụ trách', (r) => r.staff),
         xc('Trạng thái duyệt', (r) => r.workflow_state),
@@ -960,7 +963,8 @@ function staffColumns() {
     ];
 }
 
-// Trả thưởng — sheet Chi tiết (§3, có NPP) + Tổng hợp. Lần chưa trả → ô ngày / số ảnh trống.
+// Trả thưởng — sheet Chi tiết (§3, có NPP) + Tổng hợp. Lần chưa trả → ô ngày / số ảnh trống. Địa chỉ điểm: opt theo key
+// point_address (salep payout.progress chưa cập nhật → bỏ cột).
 function payColumns(rewardOf) {
     const day = (x) => (x ? x.payout_date : '');
     const pics = (x) => (x ? x.photos || 0 : '');
@@ -971,6 +975,7 @@ function payColumns(rewardOf) {
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
         xc('SĐT', (r) => r.point_phone),
+        xc('Địa chỉ', (r) => r.point_address, 'text', 'point_address'),
         xc('NV phụ trách', (r) => r.staff_name || r.owner),
         xc('NPP', (r) => r.distributor_name || r.distributor),
         xc('Lần 1 – ngày', (r) => day(r.round_1), 'date'),

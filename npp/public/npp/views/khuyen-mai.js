@@ -583,7 +583,8 @@ async function bulkSetActive(points, active, btn) {
 // filtered*() / filterPayRows() trên TOÀN BỘ dòng (mọi trang của paged(), không chỉ trang đang xem).
 // Server đã scope theo NPP (require_customer) → file không chứa gì ngoài phạm vi người dùng được xem.
 // Key bổ sung phía server (doc/10 §4: tax_code, bank_*, creation, point_bank_*, reward_per_point, staff[].cccd,
-// staff_history.participations[].point_phone/reject_reason/latitude/longitude) — server cũ thiếu → ô trống, không vỡ.
+// staff_history.participations[].point_phone/reject_reason/latitude/longitude, point_address của lượt / trả thưởng /
+// bàn giao) — server cũ thiếu → ô trống (point_address: bù từ _points), không vỡ.
 function xlScope() {
     const c = window.NPP_CONTEXT || {};
     return c.customerName || c.customer || _customer || '';
@@ -636,6 +637,13 @@ function ownerLabel(r) {
 const pointStatus = (p) => (p.is_active ? 'Hoạt động' : 'Ngừng');
 const pctOf = (n, total) => (total ? (Number(n) || 0) / total * 100 : '');
 const coord = (v) => (Number(v) ? v : '');   // Float chưa nhập = 0 → "chưa có toạ độ" (như bản đồ) → ô trống
+// Cột "Địa chỉ" (địa chỉ điểm) của dòng trỏ tới 1 điểm bán (lượt / trả thưởng / bàn giao — doc/10 §3): key
+// point_address của dòng (server mới; null = điểm ngoài NPP / đã xoá → ô trống, không bù); server cũ chưa trả key
+// (salep chưa cập nhật) → bù address_line từ _points (chỉ điểm của NPP mình). byPt dựng 1 lần cho cả file.
+const pointsByName = () => new Map(_points.map((p) => [p.name, p]));
+function pointAddr(byPt) {
+    return (r) => ('point_address' in r ? r.point_address : (byPt.get(r.display_point) || {}).address_line);
+}
 
 function staffColumns() {
     return [
@@ -672,13 +680,14 @@ function pointColumns() {
         xc('Ngày tạo', (p) => p.creation, 'date'),
     ];
 }
-function partColumns() {
+function partColumns(addr) {
     return [
         XC_STT,
         xc('Mã lượt', (r) => r.name),
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
         xc('SĐT điểm', (r) => r.point_phone),
+        xc('Địa chỉ', addr),
         xc('Chương trình', (r) => r.program_name || r.promotion_program),
         xc('NV phụ trách', ownerLabel),
         xc('Trạng thái duyệt', (r) => r.workflow_state),
@@ -701,7 +710,7 @@ function programColumns() {
         xc('Độ phủ %', (p) => p.coverage_pct || 0, 'percent'),
     ];
 }
-function payColumns(rewardOf) {
+function payColumns(rewardOf, addr) {
     const rd = (x, k) => (x ? (k === 'photos' ? x.photos || 0 : x.payout_date) : '');   // lần chưa trả → trống
     return [
         XC_STT,
@@ -710,6 +719,7 @@ function payColumns(rewardOf) {
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
         xc('SĐT', (r) => r.point_phone),
+        xc('Địa chỉ', addr),
         xc('NV phụ trách', (r) => r.staff_name || r.owner),
         xc('Lần 1 – ngày', (r) => rd(r.round_1, 'date'), 'date'),
         xc('Lần 1 – số ảnh', (r) => rd(r.round_1, 'photos'), 'int'),
@@ -733,12 +743,13 @@ function paySummaryColumns() {
         xc('% lần 2', (p) => pctOf(p.paid_2, p.eligible), 'percent'),
     ];
 }
-function transferColumns() {
+function transferColumns(addr) {
     return [
         XC_STT,
         xc('Thời gian', (r) => r.creation, 'datetime'),
         xc('Mã điểm', (r) => r.display_point),
         xc('Điểm bán', (r) => r.point_name || r.display_point),
+        xc('Địa chỉ', addr),
         xc('Nhận / Giao', (r) => (r.direction === 'in' ? 'Nhận' : 'Giao')),
         xc('Từ / Cho', (r) => r.counterpart_label),
         xc('Số lượt chuyển', (r) => r.participations_moved || 0, 'int'),
@@ -761,7 +772,7 @@ function exportParts(btn) {
         if (!_partsReady) { showToast('Danh sách tham gia đang tải — thử lại sau giây lát', 'warning'); return null; }
         const progs = _partsProg ? _programs.filter((p) => p.program === _partsProg) : _programs;
         return [
-            { name: 'Tham gia trưng bày', columns: partColumns(), rows: filteredParts() },
+            { name: 'Tham gia trưng bày', columns: partColumns(pointAddr(pointsByName())), rows: filteredParts() },
             { name: 'Chương trình', columns: programColumns(), rows: progs },
         ];
     }, {
@@ -782,8 +793,9 @@ function exportPayouts(btn) {
         const reward = new Map();
         [..._programs, ..._payPrograms, ...programs].forEach((p) => { if (p.reward_per_point) reward.set(p.program, p.reward_per_point); });
         const rewardOf = (r) => r.reward_per_point || reward.get(r.promotion_program) || '';
+        const addr = pointAddr(pointsByName());   // salep cũ chưa trả point_address → bù từ _points
         return [
-            { name: 'Chi tiết', columns: payColumns(rewardOf), rows: filterPayRows(_pay.rows || [], _payf) },
+            { name: 'Chi tiết', columns: payColumns(rewardOf, addr), rows: filterPayRows(_pay.rows || [], _payf) },
             { name: 'Tổng hợp', columns: paySummaryColumns(), rows: _payProg ? programs.filter((p) => p.program === _payProg) : programs },
         ];
     }, {
@@ -795,6 +807,8 @@ function exportPayouts(btn) {
 // - Tham gia: SĐT điểm / lý do từ chối / toạ độ lượt lấy THẲNG từ staff_history.participations (salep doc/10 §4 —
 //   đủ cho MỌI lượt của NV, kể cả lượt ngoài chương trình đang lọc / khi danh sách tham gia chưa tải; null = không có,
 //   vd. điểm ngoài NPP / đã xoá → giữ trống, không bù). Salep cũ chưa trả key → bù từ _parts (lượt) rồi _points (SĐT).
+// - Địa chỉ điểm (sheet Tham gia + Bàn giao): point_address của dòng (null → trống, không bù). Salep cũ thiếu key →
+//   Tham gia bù từ _parts (lượt, qua `old`) rồi _points; Bàn giao bù từ _points — qua pointAddr(byPt).
 // - Điểm bán: MST, TK nhận thưởng, ngày tạo (staff_history không trả) bù từ _points đã tải.
 // - NV phụ trách = NV này cho MỌI dòng (`me` ghi đè sau cùng, như /dp): mọi điểm/lượt của staff_history đều của NV
 //   này; nhãn phụ trách của _parts/_points không dùng — hồ sơ NV của tài khoản NPP ở đó là "NPP (chưa giao)" nên
@@ -810,7 +824,7 @@ function exportHistory(h, btn) {
     runExport(btn, 'LichSuNhanVien', () => {
         const d = h.data || {};
         const info = d.staff || {};
-        const byPt = new Map(_points.map((p) => [p.name, p]));
+        const byPt = pointsByName();
         const byPart = new Map(_parts.map((r) => [r.name, r]));
         const me = { owner_kind: 'staff', staff_name: info.full_name || (_staff.find((s) => s.name === h.staff) || {}).full_name || '', staff_left: !!info.resigned };
         const pts = (d.points || []).map((p) => ({ ...(byPt.get(p.name) || {}), ...p, ...me }));
@@ -825,8 +839,8 @@ function exportHistory(h, btn) {
         });
         return [
             { name: 'Điểm bán', columns: pointColumns(), rows: pts },
-            { name: 'Tham gia', columns: partColumns(), rows: pas },
-            { name: 'Bàn giao', columns: transferColumns(), rows: d.transfers || [] },
+            { name: 'Tham gia', columns: partColumns(pointAddr(byPt)), rows: pas },
+            { name: 'Bàn giao', columns: transferColumns(pointAddr(byPt)), rows: d.transfers || [] },
         ];
     }, {
         countAll: true,

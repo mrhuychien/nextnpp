@@ -278,9 +278,9 @@ def npp_overview(customer: str | None = None) -> dict:
 @frappe.whitelist()
 def npp_participations(program: str | None = None, customer: str | None = None) -> list[dict]:
     """Danh sách điểm bán THAM GIA chương trình của NPP (lọc theo chương trình nếu có), tối đa
-    PARTS_LIMIT lượt mới nhất. Mỗi dòng kèm point_phone, NV phụ trách lượt (owner → staff/staff_name/
-    staff_left/owner_kind) và program_active = chương trình còn hiệu lực (lượt sẽ chuyển theo khi
-    gán lại điểm)."""
+    PARTS_LIMIT lượt mới nhất. Mỗi dòng kèm point_phone, point_address (địa chỉ điểm — cột Excel, salep
+    doc/10 §3), NV phụ trách lượt (owner → staff/staff_name/staff_left/owner_kind) và program_active =
+    chương trình còn hiệu lực (lượt sẽ chuyển theo khi gán lại điểm)."""
     customer = require_customer(customer)
     _require_salep()
     filters = {"distributor": customer}
@@ -294,7 +294,8 @@ def npp_participations(program: str | None = None, customer: str | None = None) 
     if not rows:
         return []
     pts = {r["name"]: r for r in frappe.get_all(
-        "Display Point", filters={"distributor": customer}, fields=["name", "point_name", "phone"])}
+        "Display Point", filters={"distributor": customer},
+        fields=["name", "point_name", "phone", "address_line"])}
     pgs = {r["name"]: r for r in frappe.get_all(
         "Promotion Program", fields=["name", "program_name", "status", "end_date"])}
     who = _owner_map(customer, {r["owner"] for r in rows})
@@ -304,6 +305,7 @@ def npp_participations(program: str | None = None, customer: str | None = None) 
         pt = pts.get(r["display_point"]) or {}
         r["point_name"] = pt.get("point_name") or r["display_point"]
         r["point_phone"] = pt.get("phone")  # tìm theo SĐT ở tab Chương trình
+        r["point_address"] = pt.get("address_line")  # cột Địa chỉ file Excel (cùng truy vấn điểm của NPP)
         r["program_name"] = pg.get("program_name") or r["promotion_program"]
         r["program_active"] = _program_active(pg, today)
         r["modified"] = str(r["modified"]) if r.get("modified") else None
