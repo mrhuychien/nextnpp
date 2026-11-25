@@ -3,20 +3,47 @@
 
 import * as store from './store.js';
 
+// Body JSON của response lỗi. Nhận CẢ 2 dạng frappe.call (website.js — trang www /npp) đưa ra:
+//  - jqXHR (fail của $.ajax; Frappe < 16.50 không gọi opts.error, 403/500 cũng chỉ tới đây)
+//  - body ĐÃ PARSE {exc_type, _server_messages, …} (Frappe ≥ 16.50: 417 → opts.error(xhr.responseJSON))
+function errorBody(x) {
+    if (!x || typeof x !== 'object') return {};
+    if (x.responseJSON && typeof x.responseJSON === 'object') return x.responseJSON;
+    if ('readyState' in x || 'responseText' in x) {          // jqXHR chưa có responseJSON (HTML 502…)
+        try { return JSON.parse(x.responseText || '{}') || {}; } catch { return {}; }
+    }
+    return x;
+}
+
+// Thông điệp lỗi đọc được: ưu tiên _server_messages (frappe.throw — tiếng Việt, có cả với
+// tài khoản portal không xem được traceback), rồi dòng exception, cuối cùng exc / statusText.
+function errorMessage(xhr) {
+    const j = errorBody(xhr);
+    let msg = '';
+    try {
+        msg = JSON.parse(j._server_messages || '[]').map((m) => {
+            try { return JSON.parse(m).message; } catch { return m; }
+        }).filter(Boolean).join('; ');
+    } catch { /* _server_messages hỏng → dùng các trường khác */ }
+    msg = String(msg || '').replace(/<[^>]*>/g, '');   // frappe.bold() → bỏ thẻ HTML
+    return msg || j.exception || j.exc || xhr?.statusText || 'API error';
+}
+
 function call(method, args = {}) {
     return new Promise((resolve, reject) => {
         if (typeof window.frappe?.call !== 'function') {
             return reject(new Error('Frappe API not available — are you logged in?'));
         }
-        window.frappe.call({
+        const fail = (x) => reject(new Error(String(errorMessage(x)).slice(0, 500)));   // Promise chỉ nhận lần đầu
+        const req = window.frappe.call({
             method,
             args,
             callback: (r) => resolve(r?.message),
-            error: (xhr) => {
-                const msg = xhr?.responseJSON?.exc || xhr?.statusText || 'API error';
-                reject(new Error(String(msg).slice(0, 500)));
-            },
+            error: fail,
         });
+        // Mọi phản hồi lỗi (417 ở Frappe cũ, 403, 500, mất mạng…) đều qua fail của jqXHR —
+        // không có nhánh này thì Promise treo mãi, nút "⏳ Đang …" kẹt.
+        if (req && typeof req.fail === 'function') req.fail(fail);
     });
 }
 

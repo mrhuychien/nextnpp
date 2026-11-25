@@ -432,7 +432,8 @@ function categoryLabelOf(code) {
     for (const g of Object.values(ITEM_GROUPS)) {
         if ((g.items || []).includes(code)) return (g.item_group_name || g.label || 'Khác');
     }
-    return 'Khác';
+    // Mã đã bỏ khỏi tab nhưng còn trong đơn nháp cũ → theo nhóm hàng trên ERP
+    return (itemsCache[code] && itemsCache[code].item_group) || 'Khác';
 }
 
 function buildZaloMessage(name, rows, totals) {

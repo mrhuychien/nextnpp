@@ -14,6 +14,7 @@
     --npp-text: #0f172a;
     --npp-text-2: #475569;
     --npp-text-3: #94a3b8;
+    --npp-text-muted: var(--npp-text-3);   /* alias — .npp-cn-flabel/.npp-cn-card-* & vài view dùng tên này */
     --npp-border: #e2e8f0;
 
     --npp-primary: #3b82f6;
@@ -981,3 +982,129 @@ img.npp-zoomable { cursor: zoom-in; }
 .npp-acct-logout { margin-top: 12px; width: 100%; padding: 8px 10px; border: 1px solid var(--npp-border);
     border-radius: 10px; background: var(--npp-surface-2); color: var(--npp-danger); font-weight: 700; cursor: pointer; }
 .npp-acct-logout:hover { background: var(--npp-danger); color: #fff; }
+
+/* ─── Phân trang bảng dài — components/data-table.js → paged() ─── */
+.npp-paged { scroll-margin-top: calc(var(--npp-header-h) + 8px); }
+.npp-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 0 2px; }
+.npp-pager-btn { padding: 6px 14px; border: 1px solid var(--npp-border); border-radius: 999px; background: var(--npp-surface);
+    color: var(--npp-text); font-weight: 700; font-size: .85rem; cursor: pointer; font-family: inherit; }
+.npp-pager-btn:disabled { opacity: .35; cursor: default; }
+.npp-pager-info { font-size: .82rem; font-weight: 600; color: var(--npp-text-2); }
+
+/* ─── Khuyến mại → NV phụ trách: lọc, chọn nhiều, thanh thao tác hàng loạt ─── */
+.npp-km-search { padding-left: .9rem; font-size: 16px; }   /* 16px: iOS không tự phóng to khi gõ */
+/* select rộng theo option DÀI NHẤT (tên NV) → chặn tràn ngang; mobile: 2 select/hàng, ô tìm cả hàng */
+.npp-km-filters select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+@media (min-width: 768px) { .npp-km-filters select { max-width: 280px; } }
+@media (max-width: 767px) {
+    .npp-km-filters select { flex: 1 1 140px; }
+    .npp-km-filters .npp-dh-search { flex-basis: 100%; }
+}
+.npp-km-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem;
+    margin-top: .5rem; font-size: .82rem; color: var(--npp-text-2); }
+.npp-km-result label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.npp-km-chk { width: 18px; height: 18px; accent-color: var(--npp-season-1); cursor: pointer; vertical-align: middle; flex: none; }
+.npp-table .npp-km-chkcell { cursor: pointer; }
+.npp-table tr.npp-km-sel > td { background: var(--npp-season-glow); }
+@media (min-width: 768px) { .npp-table .npp-km-chkcell { width: 40px; text-align: center; } }
+.npp-km-tab .npp-table .npp-badge, .npp-km-hist .npp-table .npp-badge { white-space: nowrap; }
+@media (max-width: 767px) {
+    /* thẻ mobile: nhãn trái giữ nguyên, MỌI phần nội dung dồn phải thành 1 cụm
+       (tên + "(đã nghỉ)", badge + ghi chú, ✅ + số lượt) thay vì bị space-between rải ra */
+    .npp-km-tab .npp-table td, .npp-km-hist .npp-table td { column-gap: .35rem; text-align: right; overflow-wrap: anywhere; }
+    .npp-km-tab .npp-table td::before, .npp-km-hist .npp-table td::before { flex: none; margin-right: auto; padding-right: .75rem; text-align: left; }
+    /* chế độ thẻ: ô "Chọn" là cả 1 dòng bấm được, checkbox bên phải */
+    .npp-table td.npp-km-chkcell { padding: .35rem 0; border-bottom: 1px dashed var(--npp-border); margin-bottom: .25rem; }
+    .npp-table tr.npp-km-sel { background: var(--npp-season-glow); border-color: var(--npp-season-1); }
+    .npp-table tr.npp-km-sel > td { background: transparent; }
+}
+.npp-km-tab .npp-card { scroll-margin-top: calc(var(--npp-header-h) + 8px); }   /* scrollIntoView không chui dưới header cố định */
+.npp-km-callout { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%;
+    margin-bottom: .5rem; padding: .85rem 1rem; border: 1px solid var(--npp-season-1); border-radius: var(--npp-radius-md);
+    background: var(--npp-season-glow); color: var(--npp-text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.npp-km-callout strong { font-size: 1.1rem; color: var(--npp-season-1); }
+.npp-km-callout:hover { box-shadow: var(--npp-shadow-md); }
+.npp-km-opts { max-height: 260px; overflow-y: auto; border: 1px solid var(--npp-border); border-radius: var(--npp-radius-sm); }
+.npp-km-opt { display: flex; align-items: center; gap: .6rem; padding: .6rem .75rem; border-bottom: 1px solid var(--npp-border);
+    cursor: pointer; font-size: .9rem; }
+.npp-km-opt:last-child { border-bottom: none; }
+.npp-km-opt[hidden] { display: none; }
+.npp-km-opt:has(input:checked) { background: var(--npp-season-glow); font-weight: 700; }
+.npp-km-opt input { width: 18px; height: 18px; accent-color: var(--npp-season-1); flex: none; }
+.npp-km-opt small { margin-left: auto; color: var(--npp-text-3); font-weight: 600; white-space: nowrap; }
+.npp-km-hist .npp-btn-primary:disabled { opacity: .5; cursor: default; }
+
+/* Thanh thao tác hàng loạt — cố định đáy, NGAY TRÊN bottom nav; nằm trong view (rời view là mất) */
+.npp-bulkbar { position: fixed; left: 0; right: 0; bottom: var(--npp-bottom-h); z-index: 55;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem;
+    padding: .6rem .75rem; background: rgba(255, 255, 255, 0.97); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--npp-border); box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08); }
+.npp-bulkbar[hidden] { display: none; }
+.npp-bulkbar-count { font-size: .875rem; font-weight: 600; margin-right: .25rem; }
+.npp-bulkbar-count strong { color: var(--npp-season-1); font-size: 1rem; }
+.npp-bulkbar button { width: auto; flex: none; padding: .55rem .9rem; font-size: .82rem; white-space: nowrap; }
+.npp-bulkbar button:disabled { opacity: .55; cursor: progress; }
+@media (max-width: 767px) {
+    /* 2 hàng: "Đã chọn N" + Bỏ chọn │ các thao tác — không chồng 3 hàng che danh sách */
+    .npp-bulkbar { padding: .5rem .5rem; gap: .4rem; }
+    .npp-bulkbar-count { flex: 1 1 55%; text-align: left; margin: 0; padding-left: .25rem; }
+    .npp-bulkbar button { order: 2; flex: 1 1 auto; min-height: 44px; padding: .5rem .6rem; }
+    .npp-bulkbar button[data-bulk="clear"] { order: 1; flex: 0 1 auto; }
+}
+
+/* ─── Trả thưởng điểm bán 2 lần (salep doc/09) — components/payout.js ─── */
+/* Mục "💰 Trả thưởng" của 1 lượt: 2 dòng Lần 1 / Lần 2 (✓ ngày · người ghi · ảnh, hoặc "Chưa trả") */
+.npp-pay { border: 1px solid var(--npp-border); border-radius: var(--npp-radius-md); padding: .85rem; background: var(--npp-surface); }
+.npp-pay-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .25rem; }
+.npp-pay-round { margin-top: .6rem; padding: .65rem .75rem; border-radius: var(--npp-radius-sm);
+    background: var(--npp-surface-2); border-left: 4px solid var(--npp-border); }
+.npp-pay-round.npp-pay-done { background: rgba(16, 185, 129, 0.07); border-left-color: var(--npp-success); }
+.npp-pay-rhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .5rem; }
+.npp-pay-ok { color: var(--npp-success); font-weight: 700; white-space: nowrap; }
+.npp-pay-cell { display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: .1rem .35rem; }
+.npp-pay-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; margin-top: .5rem; }
+.npp-pay-thumbs img { display: block; width: 100%; height: 72px; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--npp-border); background: var(--npp-surface); cursor: zoom-in; }
+.npp-pay-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: .6rem; }
+.npp-pay-acts button { width: auto; flex: 1 1 auto; min-height: 40px; padding: .5rem .8rem; font-size: .82rem; white-space: nowrap; }
+.npp-pay-acts .npp-pay-del { flex: 0 1 auto; color: var(--npp-danger); }
+.npp-pay-acts button:disabled, .npp-pay-form button:disabled { opacity: .55; cursor: progress; }
+
+/* Form ghi/sửa: ngày trả, lưới ảnh chọn từ thư viện (xem trước + ✕ bỏ từng ảnh), tiến trình upload */
+.npp-pay-input { width: 100%; min-height: 44px; font-size: 16px; }   /* 16px: iOS không tự phóng to khi gõ */
+.npp-pay-form .npp-textarea { font-size: 16px; }
+.npp-pay-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+.npp-pay-prev { position: relative; height: 88px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--npp-border); background: var(--npp-surface-2); }
+.npp-pay-prev img { display: block; width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
+.npp-pay-rm { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border: none; border-radius: 50%;
+    background: rgba(15, 23, 42, 0.72); color: #fff; font-size: .8rem; font-weight: 700; line-height: 28px;
+    text-align: center; cursor: pointer; }
+.npp-pay-rm:disabled { opacity: .4; cursor: default; }
+.npp-pay-new { position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+    background: var(--npp-season-1); color: #fff; font-size: .65rem; font-weight: 700; }
+.npp-pay-addimg { height: 88px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: 2px dashed var(--npp-border); border-radius: 10px; background: var(--npp-surface); color: var(--npp-text-2);
+    font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.npp-pay-addimg span:first-child { font-size: 1.5rem; }
+.npp-pay-addimg:hover { border-color: var(--npp-season-1); color: var(--npp-season-1); }
+.npp-pay-addimg:disabled { opacity: .5; cursor: default; }
+.npp-pay-upbar { margin-top: .75rem; }
+
+/* Tiến độ: thanh % (Lần 1 / Lần 2), bảng theo chương trình */
+.npp-pay-bar { height: 6px; margin-top: 4px; border-radius: 4px; overflow: hidden; background: var(--npp-surface-2); }
+.npp-pay-bar > i { display: block; height: 100%; border-radius: 4px; background: var(--npp-season-grad); transition: width .2s ease; }
+.npp-pay-bar.npp-pay-full > i { background: var(--npp-success); }
+.npp-kpi-card .npp-pay-bar { background: var(--npp-border); }
+.npp-pay-pc { min-width: 120px; }
+.npp-table tr.npp-pay-total > td { font-weight: 700; background: var(--npp-surface-2); }
+.npp-table tr.npp-pay-total .npp-pay-bar { background: var(--npp-border); }   /* nền dòng Tổng = surface-2 → rãnh thanh phải đậm hơn */
+.npp-table tr.npp-pay-progrow.npp-active > td { background: var(--npp-season-glow); }
+.npp-pay-progtable .npp-badge { white-space: nowrap; }
+@media (max-width: 767px) {
+    .npp-table tr.npp-pay-total { background: var(--npp-surface-2); }
+    .npp-table tr.npp-pay-progrow.npp-active { background: var(--npp-season-glow); border-color: var(--npp-season-1); }
+    .npp-table tr.npp-pay-total > td, .npp-table tr.npp-pay-progrow.npp-active > td { background: transparent; }
+    .npp-pay-progtable td > div, .npp-pay-pc { text-align: right; }
+    .npp-pay-progtable td::before { flex: none; margin-right: auto; padding-right: .75rem; }   /* nhãn trái không bị bóp xuống 2 dòng */
+}
