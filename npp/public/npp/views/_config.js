@@ -38,7 +38,7 @@ export const ITEM_GROUPS = {
         icon: '🧧',
         item_group_name: 'Hàng Tết',
         items: [
-            'KNPQ','SMKH','KHTL',
+            'KNPQ','SMKH','KHTL','TLT','TLN',
             'TVV','NVP','NVL','STL','SVTV',
             'MDTC','TSV','BSV','HDN','TVR','THSV','THHD','THHM','CVTT',
             'PL','CĐTT','CLV','SL','ĐTL','ĐTT','ĐTN','BCT','HDT',
